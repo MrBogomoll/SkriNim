@@ -7,6 +7,7 @@ import android.text.InputType;
 import android.app.StatusBarManager;
 import android.content.ActivityNotFoundException;
 import android.content.ComponentName;
+import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
@@ -28,8 +29,22 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 public final class SetupActivity extends Activity {
-    // Manual release checks open the project page in the browser.
-    private static final String RELEASES_PAGE = "https://github.com/MrBogomoll/SkriNim/releases";
+    private static final String OPEN_SETTINGS = "ru.dot.clipshot.OPEN_SETTINGS";
+    private static final int INSTALL_PERMISSION = 83;
+    private Button checkUpdates, updateAction;
+    private TextView updateStatus;
+    private AppUpdates updates;
+    private final Runnable refreshUpdates = this::renderUpdates;
+
+    static void openSettings(Context context) {
+        try {
+            context.startActivity(new Intent(context, SetupActivity.class).setAction(OPEN_SETTINGS)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP
+                            | Intent.FLAG_ACTIVITY_CLEAR_TOP));
+        } catch (ActivityNotFoundException | SecurityException unavailable) {
+            Toast.makeText(context, "Не удалось открыть настройки SkriNim.", Toast.LENGTH_SHORT).show();
+        }
+    }
     private static final String ACTIVE_TAB = "setup.active_tab";
     private static final int CAPTURE_TAB = 0, SETTINGS_TAB = 1;
     private static final int OVERLAY_PERMISSION = 82;
@@ -50,6 +65,7 @@ public final class SetupActivity extends Activity {
     @Override public void onCreate(Bundle saved) {
         super.onCreate(saved);
         look = new Look(this);
+        updates = ((SkriNimApp) getApplication()).updates;
         idle = new IdleSettings(this);
         askingOverlay = saved != null && saved.getBoolean(ASKING_OVERLAY);
         LinearLayout layout = column();
@@ -113,7 +129,7 @@ public final class SetupActivity extends Activity {
 
         LinearLayout bubble = card(shots);
         bubble.addView(label("Плавающая кнопка", 19, look.text, true));
-        detail(bubble, "Нажми для снимка или перетащи кнопку. Работает только во время сеанса.");
+        detail(bubble, "Нажми для снимка, удерживай для настроек или перетащи кнопку. Работает во время сеанса.");
         bubbleSwitch = new CheckBox(this);
         bubbleSwitch.setText("Показывать поверх приложений");
         bubbleSwitch.setTextColor(look.text);
@@ -162,25 +178,35 @@ public final class SetupActivity extends Activity {
         LinearLayout versionColumn = column();
         aboutRow.addView(versionColumn, new LinearLayout.LayoutParams(0, -2, 1));
         versionColumn.addView(label("О приложении", 19, look.text, true));
-        TextView version = label(installedVersion(), 16, look.text, false);
+        String installed = installedVersion();
+        TextView version = label(installed == null ? "Версия неизвестна" : "Версия " + installed, 16, look.text, false);
         version.setPadding(0, dp(6), 0, 0);
         versionColumn.addView(version);
-        Button releases = look.button(this, "Обновить", look.tint,
-                RELEASES_PAGE.isEmpty() ? look.muted : look.text);
-        releases.setEnabled(!RELEASES_PAGE.isEmpty());
-        releases.setOnClickListener(v -> openReleases());
+        checkUpdates = look.button(this, "Обновить", look.tint, look.text);
+        checkUpdates.setOnClickListener(v -> updates.check(installed));
         LinearLayout.LayoutParams releaseSize = new LinearLayout.LayoutParams(-2, -2);
         releaseSize.leftMargin = dp(8);
-        aboutRow.addView(releases, releaseSize);
-        if (RELEASES_PAGE.isEmpty()) {
-            detail(about, "Проверка обновлений станет доступна после публикации релизов на GitHub.");
-        } else {
-            detail(about, "Последние версии открываются на GitHub в браузере.");
-        }
+        aboutRow.addView(checkUpdates, releaseSize);
+        detail(about, ReleaseInfo.isBeta(installed)
+                ? "Бета-версия. Следующий стабильный патч можно установить через «Обновить»."
+                : "Обновления — только стабильные версии. Бету можно скачать вручную.");
+        updateStatus = label("", 15, look.muted, false);
+        updateStatus.setPadding(0, dp(4), 0, 0);
+        about.addView(updateStatus);
+        updateAction = look.button(this, "", look.accent, look.onAccent);
+        addButton(about, updateAction);
+        updateAction.setOnClickListener(v -> performUpdateAction());
 
-        selectTab(saved == null ? CAPTURE_TAB : saved.getInt(ACTIVE_TAB, CAPTURE_TAB));
+        int initialTab = OPEN_SETTINGS.equals(getIntent().getAction()) ? SETTINGS_TAB : CAPTURE_TAB;
+        selectTab(saved == null ? initialTab : saved.getInt(ACTIVE_TAB, initialTab));
         setContentView(layout);
         look.bars(this, layout);
+    }
+
+    @Override protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        if (OPEN_SETTINGS.equals(intent.getAction())) selectTab(SETTINGS_TAB);
     }
 
     private void selectTab(int index) {
@@ -228,6 +254,11 @@ public final class SetupActivity extends Activity {
 
     @Override protected void onActivityResult(int request,int result,Intent data) {
         super.onActivityResult(request,result,data);
+        if (request == INSTALL_PERMISSION) {
+            if (getPackageManager().canRequestPackageInstalls()) openInstaller();
+            else toast("Установка не разрешена. APK уже скачан.");
+            return;
+        }
         if (request!=OVERLAY_PERMISSION || !askingOverlay) return;
         askingOverlay=false;
         if (FloatingCapture.allowed(this)) FloatingCapture.setEnabled(this,true);
@@ -261,22 +292,73 @@ public final class SetupActivity extends Activity {
                 info = manager.getPackageInfo(getPackageName(), 0);
             }
             if (info.versionName != null && !info.versionName.isEmpty()) {
-                return "Версия " + info.versionName;
+                return info.versionName;
             }
         } catch (PackageManager.NameNotFoundException ignored) {
             // Read the installed package instead of keeping a second version constant.
         }
-        return "Версия неизвестна";
+        return null;
     }
 
-    private void openReleases() {
-        if (RELEASES_PAGE.isEmpty()) return;
-        try {
-            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(RELEASES_PAGE))
-                    .addCategory(Intent.CATEGORY_BROWSABLE));
-        } catch (ActivityNotFoundException | SecurityException e) {
-            Toast.makeText(this, "Не удалось открыть GitHub в браузере", Toast.LENGTH_SHORT).show();
+    private void renderUpdates() {
+        checkUpdates.setEnabled(!updates.busy);
+        updateStatus.setText(updates.message);
+        updateAction.setVisibility(updates.action == AppUpdates.Action.NONE ? View.GONE : View.VISIBLE);
+        switch (updates.action) {
+            case DOWNLOAD: updateAction.setText("Скачать APK"); break;
+            case INSTALL: updateAction.setText("Установить"); break;
+            case PAGE: updateAction.setText("Открыть релиз на GitHub"); break;
+            default: break;
         }
+    }
+
+    private void performUpdateAction() {
+        try {
+            switch (updates.action) {
+                case DOWNLOAD:
+                    updates.download();
+                    break;
+                case PAGE:
+                    startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(updates.page()))
+                            .addCategory(Intent.CATEGORY_BROWSABLE));
+                    break;
+                case INSTALL:
+                    if (getPackageManager().canRequestPackageInstalls()) openInstaller();
+                    else startActivityForResult(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                            Uri.parse("package:" + getPackageName())), INSTALL_PERMISSION);
+                    break;
+                default: break;
+            }
+        } catch (ActivityNotFoundException | SecurityException error) {
+            toast("Не удалось открыть выбранное действие.");
+        }
+    }
+
+    private void openInstaller() {
+        if (!UpdateProvider.apk(this).isFile()) {
+            toast("Скачанный файл недоступен. Проверь обновления ещё раз.");
+            return;
+        }
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW).setDataAndType(UpdateProvider.URI, UpdateProvider.MIME)
+                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION));
+        } catch (ActivityNotFoundException | SecurityException error) {
+            toast("Не удалось открыть установщик Android.");
+        }
+    }
+
+    private void toast(String message) {
+        Toast.makeText(this, message, Toast.LENGTH_LONG).show();
+    }
+
+    @Override protected void onStart() {
+        super.onStart();
+        updates.observe(refreshUpdates);
+    }
+
+    @Override protected void onStop() {
+        updates.remove(refreshUpdates);
+        super.onStop();
     }
 
     private void refreshInterval() {

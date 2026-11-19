@@ -16,6 +16,8 @@ public final class SkriNimApp extends Application implements Application.Activit
     private final EditorGate<Activity,Bitmap> editors=new EditorGate<>();
     private final Handler main=new Handler(Looper.getMainLooper());
 
+    final AppUpdates updates = new AppUpdates(this);
+
     @Override public void onCreate() {
         super.onCreate();
         registerActivityLifecycleCallbacks(this);

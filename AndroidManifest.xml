@@ -1,8 +1,10 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="ru.dot.clipshot" android:versionCode="101" android:versionName="1.0">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="ru.dot.clipshot" android:versionCode="104" android:versionName="1.0.1">
   <uses-sdk android:minSdkVersion="31" android:targetSdkVersion="35"/>
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION"/>
   <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
+  <uses-permission android:name="android.permission.INTERNET"/>
+  <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
   <application android:name=".SkriNimApp" android:label="@string/name" android:icon="@drawable/app_icon" android:roundIcon="@drawable/app_icon" android:allowBackup="false" android:theme="@android:style/Theme.Material.Light.NoActionBar">
     <activity android:name=".SetupActivity" android:exported="true">
       <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
@@ -13,6 +15,7 @@
     <service android:name=".CaptureTile" android:exported="true" android:permission="android.permission.BIND_QUICK_SETTINGS_TILE" android:icon="@drawable/tile" android:label="@string/tile_name">
       <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE"/></intent-filter>
     </service>
+    <provider android:name=".UpdateProvider" android:authorities="ru.dot.clipshot.update" android:exported="false" android:grantUriPermissions="true"/>
     <provider android:name=".ShotProvider" android:authorities="ru.dot.clipshot.image" android:exported="false" android:grantUriPermissions="true"/>
   </application>
 </manifest>

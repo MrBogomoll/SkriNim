@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Fetch and verify build-time OCR dependencies. SkriNim itself uses no network.
+# Fetch and verify build-time OCR dependencies. Recognition on the device works offline.
 set -euo pipefail
 cache=${1:?Set OCR dependency cache directory}
 mkdir -p "$cache"
