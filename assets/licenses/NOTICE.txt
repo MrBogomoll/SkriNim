@@ -1,0 +1,12 @@
+SkriNim includes the following offline OCR components:
+
+- Tesseract4Android 4.9.0 by Adaptech s.r.o. and Robert Pösel, derived from
+  tess-two and Tesseract Tools for Android. Apache License 2.0.
+  https://github.com/adaptech-cz/Tesseract4Android/tree/4.9.0
+- Tesseract OCR 5.5.1 and tessdata_fast 4.1.0 models for Russian, English,
+  Simplified Chinese, Japanese, Korean and Ukrainian.
+  Apache License 2.0. https://github.com/tesseract-ocr
+- Leptonica 1.85.0. See Leptonica.txt. https://github.com/DanBloomberg/leptonica
+- libpng 1.6.48. See libpng.txt. https://github.com/pnggroup/libpng
+- This software is based in part on the work of the Independent JPEG Group.
+  IJG libjpeg 9f. See libjpeg.txt. https://www.ijg.org/

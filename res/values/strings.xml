@@ -1,0 +1,16 @@
+<resources>
+<string name="name">SkriNim</string>
+<string name="tile_name">Скрин в буфер</string>
+<style name="CaptureTheme" parent="@android:style/Theme.Material.Light.NoActionBar">
+  <item name="android:windowIsTranslucent">true</item>
+  <item name="android:windowBackground">@android:color/transparent</item>
+  <item name="android:colorBackgroundCacheHint">@android:color/transparent</item>
+  <item name="android:backgroundDimEnabled">false</item>
+  <item name="android:windowDisablePreview">true</item>
+  <item name="android:windowAnimationStyle">@null</item>
+  <item name="android:statusBarColor">@android:color/transparent</item>
+  <item name="android:navigationBarColor">@android:color/transparent</item>
+  <item name="android:enforceStatusBarContrast">false</item>
+  <item name="android:enforceNavigationBarContrast">false</item>
+</style>
+</resources>
