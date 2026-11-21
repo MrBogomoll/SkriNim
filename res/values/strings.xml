@@ -1,6 +1,8 @@
 <resources>
 <string name="name">SkriNim</string>
-<string name="tile_name">Скрин в буфер</string>
+<string name="scroll_service_name">Прокрутка SkriNim</string>
+<string name="scroll_service_description">Когда ты делаешь снимок, служба на короткое время получает от Android имя пакета, номер окна и события прокрутки. При создании длинного снимка она использует положение страницы, чтобы совмещать кадры, и останавливает жесты при смене окна. Нажми «Стоп», чтобы открыть снятую часть в редакторе.</string>
+<string name="tile_name">@string/name</string>
 <style name="CaptureTheme" parent="@android:style/Theme.Material.Light.NoActionBar">
   <item name="android:windowIsTranslucent">true</item>
   <item name="android:windowBackground">@android:color/transparent</item>

@@ -7,6 +7,7 @@ import android.text.InputType;
 import android.app.StatusBarManager;
 import android.content.ActivityNotFoundException;
 import android.content.ComponentName;
+import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
@@ -28,15 +29,29 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 public final class SetupActivity extends Activity {
-    // Manual release checks open the project page in the browser.
-    private static final String RELEASES_PAGE = "https://github.com/MrBogomoll/SkriNim/releases";
+    private static final String OPEN_SETTINGS = "ru.dot.clipshot.OPEN_SETTINGS";
+    private static final int INSTALL_PERMISSION = 83;
+    private Button checkUpdates, updateAction;
+    private TextView updateStatus;
+    private AppUpdates updates;
+    private final Runnable refreshUpdates = this::renderUpdates;
+
+    static void openSettings(Context context) {
+        try {
+            context.startActivity(new Intent(context, SetupActivity.class).setAction(OPEN_SETTINGS)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP
+                            | Intent.FLAG_ACTIVITY_CLEAR_TOP));
+        } catch (ActivityNotFoundException | SecurityException unavailable) {
+            Toast.makeText(context, "Не удалось открыть настройки SkriNim.", Toast.LENGTH_SHORT).show();
+        }
+    }
     private static final String ACTIVE_TAB = "setup.active_tab";
     private static final int CAPTURE_TAB = 0, SETTINGS_TAB = 1;
     private static final int OVERLAY_PERMISSION = 82;
     private static final String ASKING_OVERLAY = "setup.asking_overlay";
     private static final String[] TAB_NAMES = {"Снимок", "Настройки"};
     private TextView state;
-    private Button session;
+    private Button session, scrollAccess;
     private Look look;
     private IdleSettings idle;
     private Button interval;
@@ -50,6 +65,7 @@ public final class SetupActivity extends Activity {
     @Override public void onCreate(Bundle saved) {
         super.onCreate(saved);
         look = new Look(this);
+        updates = ((SkriNimApp) getApplication()).updates;
         idle = new IdleSettings(this);
         askingOverlay = saved != null && saved.getBoolean(ASKING_OVERLAY);
         LinearLayout layout = column();
@@ -57,7 +73,10 @@ public final class SetupActivity extends Activity {
         LinearLayout header = column();
         header.setPadding(dp(18), dp(18), dp(18), 0);
         layout.addView(header);
-        header.addView(label(getString(R.string.name), 30, look.text, true));
+        String installed = installedVersion();
+        String appTitle = getString(R.string.name);
+        if (ReleaseInfo.isBeta(installed)) appTitle += " Бета";
+        header.addView(label(appTitle, 30, look.text, true));
         TextView tagline = label("Снимки без сохранения в галерею", 15, look.muted, false);
         tagline.setPadding(0, dp(3), 0, 0);
         header.addView(tagline);
@@ -93,13 +112,18 @@ public final class SetupActivity extends Activity {
         LinearLayout capture = card(shots);
         state = label("", 19, look.text, true);
         capture.addView(state);
-        detail(capture, "Разреши захват всего экрана один раз, затем делай снимки через плитку.");
+        detail(capture, Build.VERSION.SDK_INT >= 34
+                ? "Выбери в системном окне одно приложение или весь экран. Для снимка нажми плитку или плавающую кнопку."
+                : "Разреши захват экрана. Для снимка нажми плитку или плавающую кнопку.");
         session = look.button(this, "", look.accent, look.onAccent);
         addButton(capture, session);
         session.setOnClickListener(v -> {
             if (isRunning()) {
                 stopService(new Intent(this, ProjectionService.class));
                 setSession(false);
+            } else if (ProjectionService.hasPendingConsent()) {
+                ProjectionService.resumeConsent(this);
+                state.postDelayed(refresh, 450);
             } else startActivity(new Intent(this, CaptureActivity.class)
                     .putExtra(CaptureActivity.CONSENT_ONLY, true));
         });
@@ -110,20 +134,6 @@ public final class SetupActivity extends Activity {
         Button add = look.button(this, "Добавить плитку", look.tint, look.text);
         addButton(tile, add);
         add.setOnClickListener(v -> addTile());
-
-        LinearLayout bubble = card(shots);
-        bubble.addView(label("Плавающая кнопка", 19, look.text, true));
-        detail(bubble, "Нажми для снимка или перетащи кнопку. Работает только во время сеанса.");
-        bubbleSwitch = new CheckBox(this);
-        bubbleSwitch.setText("Показывать поверх приложений");
-        bubbleSwitch.setTextColor(look.text);
-        bubbleSwitch.setButtonTintList(ColorStateList.valueOf(look.accent));
-        bubbleSwitch.setMinimumHeight(dp(48));
-        bubble.addView(bubbleSwitch);
-        bubbleStatus=label("",14,look.muted,false);
-        bubble.addView(bubbleStatus);
-        bubbleSwitch.setOnCheckedChangeListener((view,checked) -> onBubbleSwitch(checked));
-        refreshBubble();
 
         LinearLayout appearance = card(settings);
         appearance.addView(label("Тема", 19, look.text, true));
@@ -137,7 +147,7 @@ public final class SetupActivity extends Activity {
 
         LinearLayout timeout = card(settings);
         timeout.addView(label("Автоотключение", 19, look.text, true));
-        detail(timeout, "Завершает захват после паузы. Текст уведомлений снова становится виден.");
+        detail(timeout, "Завершает сеанс захвата после паузы.");
         CheckBox enabled = new CheckBox(this);
         enabled.setText("Автоотключение захвата");
         enabled.setTextColor(look.text);
@@ -155,6 +165,30 @@ public final class SetupActivity extends Activity {
             refreshInterval();
         });
 
+        LinearLayout longShot = card(settings);
+        longShot.addView(label("Прокрутка", 19, look.text, true));
+        detail(longShot, "Служба специальных возможностей нужна для длинных снимков из редактора.");
+        scrollAccess = look.button(this, "", look.tint, look.text);
+        scrollAccess.setOnClickListener(v -> {
+            if (ScrollGestureService.current == null) ScrollAccess.explain(this);
+            else ScrollAccess.open(this);
+        });
+        addButton(longShot, scrollAccess);
+
+        LinearLayout bubble = card(settings);
+        bubble.addView(label("Плавающая кнопка", 19, look.text, true));
+        detail(bubble, "Нажми для снимка, удерживай для настроек или перетащи кнопку. Работает во время сеанса.");
+        bubbleSwitch = new CheckBox(this);
+        bubbleSwitch.setText("Показывать поверх приложений");
+        bubbleSwitch.setTextColor(look.text);
+        bubbleSwitch.setButtonTintList(ColorStateList.valueOf(look.accent));
+        bubbleSwitch.setMinimumHeight(dp(48));
+        bubble.addView(bubbleSwitch);
+        bubbleStatus=label("",14,look.muted,false);
+        bubble.addView(bubbleStatus);
+        bubbleSwitch.setOnCheckedChangeListener((view,checked) -> onBubbleSwitch(checked));
+        refreshBubble();
+
         LinearLayout about = card(settings);
         LinearLayout aboutRow = new LinearLayout(this);
         aboutRow.setGravity(Gravity.CENTER_VERTICAL);
@@ -162,25 +196,34 @@ public final class SetupActivity extends Activity {
         LinearLayout versionColumn = column();
         aboutRow.addView(versionColumn, new LinearLayout.LayoutParams(0, -2, 1));
         versionColumn.addView(label("О приложении", 19, look.text, true));
-        TextView version = label(installedVersion(), 16, look.text, false);
+        TextView version = label(installed == null ? "Версия неизвестна" : "Версия " + installed, 16, look.text, false);
         version.setPadding(0, dp(6), 0, 0);
         versionColumn.addView(version);
-        Button releases = look.button(this, "Обновить", look.tint,
-                RELEASES_PAGE.isEmpty() ? look.muted : look.text);
-        releases.setEnabled(!RELEASES_PAGE.isEmpty());
-        releases.setOnClickListener(v -> openReleases());
+        checkUpdates = look.button(this, "Обновить", look.tint, look.text);
+        checkUpdates.setOnClickListener(v -> updates.check(installed));
         LinearLayout.LayoutParams releaseSize = new LinearLayout.LayoutParams(-2, -2);
         releaseSize.leftMargin = dp(8);
-        aboutRow.addView(releases, releaseSize);
-        if (RELEASES_PAGE.isEmpty()) {
-            detail(about, "Проверка обновлений станет доступна после публикации релизов на GitHub.");
-        } else {
-            detail(about, "Последние версии открываются на GitHub в браузере.");
-        }
+        aboutRow.addView(checkUpdates, releaseSize);
+        detail(about, ReleaseInfo.isBeta(installed)
+                ? "Бета-версия. Следующий стабильный патч можно установить через «Обновить»."
+                : "Обновления — только стабильные версии. Бету можно скачать вручную.");
+        updateStatus = label("", 15, look.muted, false);
+        updateStatus.setPadding(0, dp(4), 0, 0);
+        about.addView(updateStatus);
+        updateAction = look.button(this, "", look.accent, look.onAccent);
+        addButton(about, updateAction);
+        updateAction.setOnClickListener(v -> performUpdateAction());
 
-        selectTab(saved == null ? CAPTURE_TAB : saved.getInt(ACTIVE_TAB, CAPTURE_TAB));
+        int initialTab = OPEN_SETTINGS.equals(getIntent().getAction()) ? SETTINGS_TAB : CAPTURE_TAB;
+        selectTab(saved == null ? initialTab : saved.getInt(ACTIVE_TAB, initialTab));
         setContentView(layout);
         look.bars(this, layout);
+    }
+
+    @Override protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        if (OPEN_SETTINGS.equals(intent.getAction())) selectTab(SETTINGS_TAB);
     }
 
     private void selectTab(int index) {
@@ -228,6 +271,11 @@ public final class SetupActivity extends Activity {
 
     @Override protected void onActivityResult(int request,int result,Intent data) {
         super.onActivityResult(request,result,data);
+        if (request == INSTALL_PERMISSION) {
+            if (getPackageManager().canRequestPackageInstalls()) openInstaller();
+            else toast("Установка не разрешена. APK уже скачан.");
+            return;
+        }
         if (request!=OVERLAY_PERMISSION || !askingOverlay) return;
         askingOverlay=false;
         if (FloatingCapture.allowed(this)) FloatingCapture.setEnabled(this,true);
@@ -261,22 +309,73 @@ public final class SetupActivity extends Activity {
                 info = manager.getPackageInfo(getPackageName(), 0);
             }
             if (info.versionName != null && !info.versionName.isEmpty()) {
-                return "Версия " + info.versionName;
+                return info.versionName;
             }
         } catch (PackageManager.NameNotFoundException ignored) {
             // Read the installed package instead of keeping a second version constant.
         }
-        return "Версия неизвестна";
+        return null;
     }
 
-    private void openReleases() {
-        if (RELEASES_PAGE.isEmpty()) return;
-        try {
-            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(RELEASES_PAGE))
-                    .addCategory(Intent.CATEGORY_BROWSABLE));
-        } catch (ActivityNotFoundException | SecurityException e) {
-            Toast.makeText(this, "Не удалось открыть GitHub в браузере", Toast.LENGTH_SHORT).show();
+    private void renderUpdates() {
+        checkUpdates.setEnabled(!updates.busy);
+        updateStatus.setText(updates.message);
+        updateAction.setVisibility(updates.action == AppUpdates.Action.NONE ? View.GONE : View.VISIBLE);
+        switch (updates.action) {
+            case DOWNLOAD: updateAction.setText("Скачать APK"); break;
+            case INSTALL: updateAction.setText("Установить"); break;
+            case PAGE: updateAction.setText("Открыть релиз на GitHub"); break;
+            default: break;
         }
+    }
+
+    private void performUpdateAction() {
+        try {
+            switch (updates.action) {
+                case DOWNLOAD:
+                    updates.download();
+                    break;
+                case PAGE:
+                    startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(updates.page()))
+                            .addCategory(Intent.CATEGORY_BROWSABLE));
+                    break;
+                case INSTALL:
+                    if (getPackageManager().canRequestPackageInstalls()) openInstaller();
+                    else startActivityForResult(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                            Uri.parse("package:" + getPackageName())), INSTALL_PERMISSION);
+                    break;
+                default: break;
+            }
+        } catch (ActivityNotFoundException | SecurityException error) {
+            toast("Не удалось открыть выбранное действие.");
+        }
+    }
+
+    private void openInstaller() {
+        if (!UpdateProvider.apk(this).isFile()) {
+            toast("Скачанный файл недоступен. Проверь обновления ещё раз.");
+            return;
+        }
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW).setDataAndType(UpdateProvider.URI, UpdateProvider.MIME)
+                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION));
+        } catch (ActivityNotFoundException | SecurityException error) {
+            toast("Не удалось открыть установщик Android.");
+        }
+    }
+
+    private void toast(String message) {
+        Toast.makeText(this, message, Toast.LENGTH_LONG).show();
+    }
+
+    @Override protected void onStart() {
+        super.onStart();
+        updates.observe(refreshUpdates);
+    }
+
+    @Override protected void onStop() {
+        updates.remove(refreshUpdates);
+        super.onStop();
     }
 
     private void refreshInterval() {
@@ -346,16 +445,16 @@ public final class SetupActivity extends Activity {
     }
 
     private void addTile() {
+        String title = getString(R.string.tile_name);
         if (Build.VERSION.SDK_INT >= 33) {
             try {
                 getSystemService(StatusBarManager.class).requestAddTileService(
-                    new ComponentName(this, CaptureTile.class), "Скрин в буфер", Icon.createWithResource(this,
-                        getResources().getIdentifier("tile", "drawable", getPackageName())), getMainExecutor(), n -> {
+                    new ComponentName(this, CaptureTile.class), title, Icon.createWithResource(this, R.drawable.tile), getMainExecutor(), n -> {
                             if (n != StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ADDED
-                                && n != StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ALREADY_ADDED) editHint();
+                                && n != StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ALREADY_ADDED) editHint(title);
                         });
-            } catch (RuntimeException ex) { editHint(); }
-        } else editHint();
+            } catch (RuntimeException ex) { editHint(title); }
+        } else editHint(title);
     }
 
     private void themeOption(LinearLayout row, String title, boolean dark) {
@@ -414,8 +513,8 @@ public final class SetupActivity extends Activity {
 
     private int dp(float value) { return Look.dp(this, value); }
 
-    private void editHint() {
-        Toast.makeText(this, "Открой шторку → редактирование плиток → «Скрин в буфер»", Toast.LENGTH_LONG).show();
+    private void editHint(String title) {
+        Toast.makeText(this, "Открой шторку → редактирование плиток → «" + title + "»", Toast.LENGTH_LONG).show();
     }
 
     private boolean isRunning() {
@@ -425,6 +524,8 @@ public final class SetupActivity extends Activity {
     private void setSession(boolean running) {
         state.setText(running ? "Сеанс активен" : "Сеанс не запущен");
         session.setText(running ? "Остановить сеанс" : "Начать сеанс");
+        scrollAccess.setText(ScrollGestureService.current == null
+                ? "Разрешить прокрутку" : "Прокрутка включена · Настройки");
         refreshBubble();
     }
 
@@ -432,6 +533,14 @@ public final class SetupActivity extends Activity {
         super.onResume();
         setSession(isRunning());
         state.postDelayed(refresh, 450);
+    }
+
+    @Override public void onWindowFocusChanged(boolean focused) {
+        super.onWindowFocusChanged(focused);
+        if (focused && state != null && ProjectionService.hasPendingConsent()) {
+            ProjectionService.resumeConsent(this);
+            state.postDelayed(refresh, 450);
+        }
     }
 
     private final Runnable refresh = () -> setSession(isRunning());

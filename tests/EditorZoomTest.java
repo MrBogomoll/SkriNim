@@ -26,6 +26,12 @@ public final class EditorZoomTest {
         eq(10,zoom.left);
         eq(20,zoom.top);
 
+        // A long screenshot initially fitted into a 500px viewport can still reach 1:1.
+        zoom.maxScale = 16_000f / 500f;
+        zoom.update(36,500,82,0,200,500,100,250,100,250,100);
+        eq(32, zoom.scale);
+        eq(16_000, 500 * zoom.scale);
+
         EditorZoom.Gesture gesture = new EditorZoom.Gesture();
         yes(!gesture.capture(true,false,1));
         yes(gesture.capture(false,false,2));

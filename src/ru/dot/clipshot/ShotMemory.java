@@ -6,37 +6,46 @@ import android.content.Context;
 import android.graphics.Bitmap;
 import android.net.Uri;
 import android.os.PersistableBundle;
-import java.io.ByteArrayOutputStream;
 import java.util.UUID;
 
 final class ShotMemory {
     private static final String AUTH = "ru.dot.clipshot.image";
-    private static Bitmap preview;
+    private static ScrollPage page;
+    private static ScrollGestureService.Origin origin;
     private static volatile Entry entry;
 
-    static void putPreview(Bitmap bitmap) { preview = bitmap; }
-    static Bitmap preview() { return preview; }
-    static void clearPreview(Bitmap expected) { if (preview == expected) preview = null; }
+    static void putPage(ScrollPage next) {
+        if (page != next) origin = null;
+        page = next;
+    }
+    static void setOrigin(ScrollGestureService.Origin value) { origin = value; }
+    static ScrollGestureService.Origin origin() { return origin; }
+    static ScrollPage page() { return page; }
+    static Bitmap preview() { return page == null ? null : page.image; }
+    static void clearPreview(Bitmap expected) { if (preview() == expected) putPage(null); }
 
     private static final class Entry {
         final Uri uri;
-        final byte[] png;
-        Entry(byte[] png) {
+        final PngBuffer png;
+        Entry(PngBuffer png) {
             this.uri = new Uri.Builder().scheme("content").authority(AUTH)
                     .appendPath(UUID.randomUUID().toString() + ".png").build();
             this.png = png;
         }
     }
 
-    static byte[] find(Uri uri) {
+    static PngBuffer find(Uri uri) {
         Entry current = entry;
         return current != null && current.uri.equals(uri) ? current.png : null;
     }
 
-    static boolean copy(Context context, Bitmap bitmap) {
-        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
-        if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, buffer)) return false;
-        Entry next = new Entry(buffer.toByteArray());
+    static PngBuffer encode(Bitmap bitmap) {
+        PngBuffer png = new PngBuffer();
+        return bitmap.compress(Bitmap.CompressFormat.PNG, 100, png) ? png : null;
+    }
+
+    static boolean copy(Context context, PngBuffer png) {
+        Entry next = new Entry(png);
         Entry old = entry;
         entry = next;
         try {

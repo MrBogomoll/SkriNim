@@ -3,12 +3,11 @@ package ru.dot.clipshot;
 import android.app.Activity;
 import android.app.KeyguardManager;
 import android.content.Intent;
-import android.media.projection.MediaProjectionConfig;
 import android.media.projection.MediaProjectionManager;
-import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.view.WindowManager;
 import android.widget.Toast;
 
@@ -17,6 +16,7 @@ public final class CaptureActivity extends Activity {
     private static final int CAPTURE_CONSENT = 45;
     private final Handler ui = new Handler(Looper.getMainLooper());
     private boolean resumed, requested, asking;
+    private long waitForSessionUntil;
     private final Runnable tryCapture = this::captureAfterCollapse;
 
     @Override public void onCreate(Bundle saved) {
@@ -25,9 +25,12 @@ public final class CaptureActivity extends Activity {
         getWindow().setNavigationBarContrastEnforced(false);
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING
                 | WindowManager.LayoutParams.SOFT_INPUT_STATE_UNCHANGED);
-        if (saved != null) asking = saved.getBoolean("asking");
+        if (saved != null) {
+            asking = saved.getBoolean("asking");
+            waitForSessionUntil = saved.getLong("waitForSession");
+        }
         ui.postDelayed(() -> {
-            if (!requested && !asking && !isFinishing()) {
+            if (!requested && !asking && waitForSessionUntil == 0 && !isFinishing()) {
                 Toast.makeText(this, "Шторка не закрылась. Снимок не сделан.", Toast.LENGTH_SHORT).show();
                 finishQuietly();
             }
@@ -35,6 +38,7 @@ public final class CaptureActivity extends Activity {
     }
     @Override protected void onSaveInstanceState(Bundle out) {
         out.putBoolean("asking", asking);
+        out.putLong("waitForSession", waitForSessionUntil);
         super.onSaveInstanceState(out);
     }
     @Override protected void onResume() {
@@ -71,13 +75,26 @@ public final class CaptureActivity extends Activity {
         }
         ProjectionService service = ProjectionService.current;
         if (service == null || !service.ready()) {
+            if (waitForSessionUntil == 0 && ProjectionService.hasPendingConsent()) {
+                if (!ProjectionService.resumeConsent(this)) {
+                    finishQuietly();
+                    return;
+                }
+                waitForSessionUntil = SystemClock.uptimeMillis() + 4000;
+            }
+            if (waitForSessionUntil != 0) {
+                if (SystemClock.uptimeMillis() < waitForSessionUntil) ui.postDelayed(tryCapture, 100);
+                else {
+                    Toast.makeText(this, "Сеанс пока не запущен. Нажми плитку ещё раз.", Toast.LENGTH_LONG).show();
+                    finishQuietly();
+                }
+                return;
+            }
             asking = true;
-            MediaProjectionManager manager = getSystemService(MediaProjectionManager.class);
-            Intent prompt = Build.VERSION.SDK_INT >= 34
-                ? manager.createScreenCaptureIntent(MediaProjectionConfig.createConfigForDefaultDisplay())
-                : manager.createScreenCaptureIntent();
-            try { startActivityForResult(prompt, CAPTURE_CONSENT); }
-            catch (RuntimeException e) {
+            try {
+                MediaProjectionManager manager = getSystemService(MediaProjectionManager.class);
+                startActivityForResult(manager.createScreenCaptureIntent(), CAPTURE_CONSENT);
+            } catch (RuntimeException e) {
                 Toast.makeText(this, "Не удалось открыть системный запрос", Toast.LENGTH_SHORT).show();
                 finishQuietly();
             }
@@ -85,7 +102,7 @@ public final class CaptureActivity extends Activity {
         }
         if (getIntent().getBooleanExtra(CONSENT_ONLY, false)) { finishQuietly(); return; }
         requested = true;
-        service.capture(bitmap -> {
+        service.capture((bitmap, origin) -> {
             if (canCapture() && app.returnToEditor(this)) {
                 if (bitmap!=null) bitmap.recycle();
                 finishQuietly();
@@ -94,32 +111,25 @@ public final class CaptureActivity extends Activity {
             if (bitmap == null || !canCapture()) {
                 if (bitmap != null) bitmap.recycle();
                 if (!isFinishing()) {
-                    Toast.makeText(this, "Снимок не сделан. Попробуй ещё раз.", Toast.LENGTH_SHORT).show();
+                    Toast.makeText(this, service.captureFailureMessage(), Toast.LENGTH_SHORT).show();
                     finishQuietly();
                 }
                 return;
             }
-            app.openOrReturn(this,bitmap);
+            app.openOrReturn(this,bitmap,origin);
             finishQuietly();
         });
     }
     @Override protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
-        if (request != CAPTURE_CONSENT) return;
+        if (request != CAPTURE_CONSENT || !asking) return;
+        requested = true;
+        asking = false;
         if (((SkriNimApp)getApplication()).returnToEditor(this)) {
             finishQuietly();
             return;
         }
-        if (result == RESULT_OK && data != null) {
-            try {
-                startForegroundService(ProjectionService.startIntent(this, result, data));
-                Toast.makeText(this, FloatingCapture.enabled(this)
-                        ? "Сеанс запущен. Для снимка нажми плитку или плавающую кнопку."
-                        : "Сеанс запущен. Нажми плитку для снимка.", Toast.LENGTH_LONG).show();
-            } catch (RuntimeException ex) {
-                Toast.makeText(this, "Не удалось начать сеанс захвата.", Toast.LENGTH_LONG).show();
-            }
-        }
+        if (result == RESULT_OK && data != null) ProjectionService.acceptConsent(this, result, data);
         finishQuietly();
     }
     @SuppressWarnings("deprecation")

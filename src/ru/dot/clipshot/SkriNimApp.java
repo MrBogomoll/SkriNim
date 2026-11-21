@@ -16,6 +16,8 @@ public final class SkriNimApp extends Application implements Application.Activit
     private final EditorGate<Activity,Bitmap> editors=new EditorGate<>();
     private final Handler main=new Handler(Looper.getMainLooper());
 
+    final AppUpdates updates = new AppUpdates(this);
+
     @Override public void onCreate() {
         super.onCreate();
         registerActivityLifecycleCallbacks(this);
@@ -41,18 +43,47 @@ public final class SkriNimApp extends Application implements Application.Activit
     }
 
     /** Always takes ownership of the new bitmap, even if another editor wins the race. */
-    void openOrReturn(Context caller,Bitmap preview) {
+    void openOrReturn(Context caller, Bitmap preview, ScrollGestureService.Origin origin) {
+        ScrollPage page = new ScrollPage(preview);
+        openPage(caller, page, null);
+        if (ShotMemory.page() == page) ShotMemory.setOrigin(origin);
+    }
+
+    private void openPage(Context caller, ScrollPage page, ScrollPage previous) {
+        Bitmap preview = page.image;
         if (!editors.reserve(preview)) {
             returnToEditor(caller);
-            preview.recycle();
+            if (previous == null) preview.recycle();
+            else page.discardComparedTo(previous);
             return;
         }
-        ShotMemory.putPreview(preview);
+        ShotMemory.putPage(page);
         try {
             caller.startActivity(editorIntent(caller));
-            main.postDelayed(() -> cancelLaunch(preview),2400);
+            main.postDelayed(() -> cancelLaunch(page, previous),2400);
         } catch (RuntimeException error) {
-            cancelLaunch(preview);
+            cancelLaunch(page, previous);
+        }
+    }
+
+    /** Return to the same screenshot, replacing it only after a successful extension. */
+    void finishEditorScroll(Context caller, ScrollPage previous, ScrollPage result) {
+        if (ShotMemory.page() != previous) {
+            if (result != null) result.discardComparedTo(previous);
+            return;
+        }
+        ScrollPage next = result != null ? result : previous;
+        if (!editors.occupied()) {
+            openPage(caller, next, previous);
+            return;
+        }
+        ShotMemory.putPage(next);
+        try {
+            caller.startActivity(editorIntent(caller));
+        } catch (RuntimeException launchFailed) {
+            ShotMemory.putPage(previous);
+            if (result != null) result.discardComparedTo(previous);
+            Toast.makeText(caller, "Не удалось вернуться в редактор.", Toast.LENGTH_SHORT).show();
         }
     }
 
@@ -61,11 +92,12 @@ public final class SkriNimApp extends Application implements Application.Activit
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_NO_ANIMATION);
     }
 
-    private void cancelLaunch(Bitmap preview) {
-        Bitmap abandoned=editors.abandon(preview);
+    private void cancelLaunch(ScrollPage page, ScrollPage previous) {
+        Bitmap abandoned=editors.abandon(page.image);
         if (abandoned==null) return;
-        ShotMemory.clearPreview(abandoned);
-        abandoned.recycle();
+        if (ShotMemory.page() == page) ShotMemory.putPage(previous);
+        if (previous == null) abandoned.recycle();
+        else page.discardComparedTo(previous);
         notifyChange(null);
         Toast.makeText(this,"Редактор не открылся. Попробуй ещё раз.",Toast.LENGTH_SHORT).show();
     }

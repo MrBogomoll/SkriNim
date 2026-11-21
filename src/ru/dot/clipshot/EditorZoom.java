@@ -3,12 +3,13 @@ package ru.dot.clipshot;
 /** View-only zoom. The same scale and offset must be applied to image and crop. */
 final class EditorZoom {
     float scale=1, left, top;
+    float maxScale=8;
 
     void reset() { scale=1; }
 
     void update(float fitW,float fitH,float oldLeft,float oldTop,int viewW,int viewH,
                 float oldX,float oldY,float x,float y,float spanRatio) {
-        float next=Math.max(1f,Math.min(8f,scale*spanRatio));
+        float next=Math.max(1f,Math.min(maxScale,scale*spanRatio));
         float gain=next/scale;
         float pad=Math.max(0,Math.min(viewW-fitW,viewH-fitH)/2);
         left=bound(x-(oldX-oldLeft)*gain,fitW*next,viewW,pad);

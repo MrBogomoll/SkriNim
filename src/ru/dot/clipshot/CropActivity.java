@@ -2,26 +2,37 @@ package ru.dot.clipshot;
 
 import android.app.Activity;
 import android.content.Intent;
+import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Matrix;
 import android.graphics.Paint;
 import android.graphics.RectF;
+import android.media.projection.MediaProjectionManager;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.SystemClock;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.widget.Button;
 import android.widget.FrameLayout;
+import android.widget.ImageButton;
 import android.widget.LinearLayout;
 import android.widget.Toast;
 import android.widget.TextView;
 import android.widget.ScrollView;
+import java.io.IOException;
 
 public final class CropActivity extends Activity {
     private CropView crop;
     private Bitmap source;
+    private android.app.AlertDialog exportProgress;
+    // Main-thread only. Keep a recreated editor from writing a second copy while
+    // its predecessor is finishing the same explicit save.
+    private static boolean saving;
     private Look look;
     private final Button[] tools = new Button[Markup.CALLOUT + 1];
     private static final String[] PENCIL_ICONS = {"✎","╱","↗"};
@@ -38,7 +49,14 @@ public final class CropActivity extends Activity {
     private final int[] shapeGestures=new int[Markup.CALLOUT+1];
     private final boolean[] shapeFills=new boolean[Markup.CALLOUT+1], shapeFree=new boolean[Markup.CALLOUT+1];
     private LinearLayout cropControls;
-    private Button formatButton,tiltButton;
+    private Button formatButton,tiltButton,scrollDownButton,scrollUpButton;
+    private LinearLayout scrollActions;
+    private static final int SCROLL_CONSENT = 46;
+    private final Handler scrollHandler = new Handler(Looper.getMainLooper());
+    private final Runnable continueScroll = this::startAfterScrollConsent;
+    private boolean askingScrollConsent, scrollUpward, resumeGrantOnFocus;
+    private android.app.AlertDialog scrollConfirmation;
+    private long waitForProjectionUntil;
     private boolean tiltGuide;
     private Button undo;
     private LinearLayout styleControls,colorControls;
@@ -111,6 +129,12 @@ public final class CropActivity extends Activity {
             return;
         }
 
+        if (saved != null) {
+            askingScrollConsent = saved.getBoolean("askingScrollConsent");
+            resumeGrantOnFocus = saved.getBoolean("resumeScrollGrant");
+            scrollUpward = saved.getBoolean("scrollUpward");
+            waitForProjectionUntil = saved.getLong("waitForScrollProjection");
+        }
         int shortSide = Math.min(bitmap.getWidth(), bitmap.getHeight());
         strokeSize = new StrokeSize(shortSide);
         captionSize = StrokeSize.caption(shortSide);
@@ -140,9 +164,27 @@ public final class CropActivity extends Activity {
         LinearLayout header = new LinearLayout(this);
         header.setGravity(Gravity.CENTER_VERTICAL);
         header.setPadding(dp(14), dp(6), dp(12), dp(4));
+        ImageButton save = new ImageButton(this);
+        save.setImageResource(R.drawable.save_screenshot);
+        save.setImageTintList(android.content.res.ColorStateList.valueOf(look.accent));
+        save.setBackground(new android.graphics.drawable.RippleDrawable(
+                android.content.res.ColorStateList.valueOf(look.dark ? 0x34ffffff : 0x24001c40),
+                look.shape(this, look.tint, 14, false), null));
+        save.setPadding(dp(12),dp(12),dp(12),dp(12));
+        save.setContentDescription("Сохранить снимок");
+        save.setTooltipText("Сохранить в папку скриншотов");
+        save.setOnClickListener(v -> {
+            if (crop.hasDraft()) {
+                Toast.makeText(this, "Сначала нажми «Применить», чтобы сохранить правку.", Toast.LENGTH_SHORT).show();
+            } else exportSelection(true);
+        });
+        LinearLayout.LayoutParams saveSize = new LinearLayout.LayoutParams(dp(48), dp(48));
+        saveSize.rightMargin = dp(6);
+        header.addView(save, saveSize);
         TextView title = new TextView(this);
         title.setText("Снимок");
-        title.setTextSize(20);
+        title.setSingleLine(true);
+        title.setAutoSizeTextTypeUniformWithConfiguration(12,20,1,android.util.TypedValue.COMPLEX_UNIT_SP);
         title.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
         title.setTextColor(look.text);
         header.addView(title, new LinearLayout.LayoutParams(0, -2, 1f));
@@ -196,7 +238,15 @@ public final class CropActivity extends Activity {
         paletteSlot.addView(makeCropControls(),new FrameLayout.LayoutParams(-1,-1));
         paletteSlot.addView(makeColorControls(),new FrameLayout.LayoutParams(-1,-1));
         details.addView(paletteSlot,new LinearLayout.LayoutParams(-1,dp(EditorToolbarMetrics.PALETTE_DP)));
-        details.addView(makeStyleControls(),new LinearLayout.LayoutParams(-1,dp(EditorToolbarMetrics.OPTIONS_DP)));
+        FrameLayout options = new FrameLayout(this);
+        options.addView(makeStyleControls(), new FrameLayout.LayoutParams(-1, -1));
+        scrollActions = new LinearLayout(this);
+        scrollActions.setPadding(dp(8), 0, dp(8), 0);
+        scrollActions.setBaselineAligned(false);
+        scrollDownButton = scrollAction("Прокрутка вниз", "Добавить к снимку часть страницы ниже", () -> requestScroll(false));
+        scrollUpButton = scrollAction("Прокрутка вверх", "Добавить к снимку часть страницы выше", () -> requestScroll(true));
+        options.addView(scrollActions, new FrameLayout.LayoutParams(-1, -1));
+        details.addView(options,new LinearLayout.LayoutParams(-1,dp(EditorToolbarMetrics.OPTIONS_DP)));
         FrameLayout detailsSlot=new FrameLayout(this);
         detailsSlot.addView(details,new FrameLayout.LayoutParams(-1,-1));
         toolbar.addView(detailsSlot,new LinearLayout.LayoutParams(-1,
@@ -244,22 +294,8 @@ public final class CropActivity extends Activity {
         toolbar.addView(actionSlot,new LinearLayout.LayoutParams(-1,dp(EditorToolbarMetrics.ACTIONS_DP)));
         action(actions, "Отмена", "Закрыть без копирования", look.tint, look.text, 0.88f, this::finish);
         action(actions, "↺", "Сбросить обрезку", look.tint, look.text, 0f, crop::reset);
-        action(actions, "Копировать", "Скопировать обрезанный снимок", look.accent, look.onAccent, 1.4f, () -> {
-            Bitmap result = null;
-            boolean copied = false;
-            try {
-                result = crop.selection();
-                copied = ShotMemory.copy(this, result);
-            } catch (RuntimeException | OutOfMemoryError ignored) {
-                // Keep the editor and previous clipboard when compositing fails.
-            } finally {
-                if (result != null && result != source) result.recycle();
-            }
-            if (copied) {
-                Toast.makeText(this, "Снимок в буфере", Toast.LENGTH_SHORT).show();
-                finish();
-            } else Toast.makeText(this, "Не удалось скопировать снимок", Toast.LENGTH_SHORT).show();
-        });
+        action(actions, "Копировать", "Скопировать обрезанный снимок", look.accent, look.onAccent, 1.4f,
+                () -> exportSelection(false));
         LinearLayout.LayoutParams bar = new LinearLayout.LayoutParams(-1, -2);
         bar.setMargins(dp(10), 0, dp(10), dp(5));
         layout.addView(editorToolbar,bar);
@@ -274,9 +310,242 @@ public final class CropActivity extends Activity {
         getWindow().setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         setContentView(root);
         look.bars(this, layout);
+        if (saved != null && saved.getBoolean("confirmScroll"))
+            confirmScroll();
+    }
+
+    private Button scrollAction(String label, String description, Runnable tap) {
+        Button button = look.button(this, label, look.tint, look.accent);
+        button.setSingleLine(true);
+        button.setAutoSizeTextTypeUniformWithConfiguration(10, 14, 1, android.util.TypedValue.COMPLEX_UNIT_SP);
+        button.setStateListAnimator(null);
+        button.setContentDescription(description);
+        button.setOnClickListener(v -> tap.run());
+        LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(0, -1, 1f);
+        size.setMargins(dp(3), 0, dp(3), 0);
+        scrollActions.addView(button, size);
+        return button;
+    }
+
+    void refreshScrollButtons() {
+        if (scrollUpButton == null) return;
+        scrollActions.setVisibility(editorTool == Markup.CROP
+                ? View.VISIBLE : View.GONE);
+        ProjectionService service = ProjectionService.current;
+        boolean enabled = (service == null || !service.scrolling()) && !askingScrollConsent && waitForProjectionUntil == 0;
+        scrollDownButton.setEnabled(enabled);
+        scrollUpButton.setEnabled(enabled);
+        scrollActions.setAlpha(enabled ? 1f : .45f);
+    }
+
+    boolean hasScreenshotEdits() { return crop.hasEdits(); }
+
+    private void requestScroll(boolean upward) {
+        if (askingScrollConsent || waitForProjectionUntil != 0 || scrollConfirmation != null) return;
+        if (ScrollGestureService.current == null) {
+            ScrollAccess.explain(this);
+            return;
+        }
+        scrollUpward = upward;
+        if (crop.hasEdits()) confirmScroll();
+        else beginScroll();
+    }
+
+    private void confirmScroll() {
+        scrollConfirmation = new android.app.AlertDialog.Builder(this)
+                .setMessage("Готовый длинный снимок заменит текущий кадр и его правки.")
+                .setPositiveButton(scrollUpward ? "Прокрутка вверх" : "Прокрутка вниз", (dialog, which) -> beginScroll())
+                .setNegativeButton("Отмена", null).create();
+        scrollConfirmation.setOnDismissListener(dialog -> scrollConfirmation = null);
+        scrollConfirmation.show();
+    }
+
+    private void beginScroll() {
+        resumeGrantOnFocus = false;
+        ProjectionService service = ProjectionService.current;
+        if (service != null && service.ready()) {
+            service.startScrollingFromEditor(this, source, scrollUpward);
+            refreshScrollButtons();
+            return;
+        }
+        if (ProjectionService.hasPendingConsent()) {
+            if (ProjectionService.resumeConsent(this)) waitForScrollService();
+            else resumeGrantOnFocus = ProjectionService.hasPendingConsent();
+            return;
+        }
+        try {
+            MediaProjectionManager manager = getSystemService(MediaProjectionManager.class);
+            Intent consent = manager.createScreenCaptureIntent();
+            askingScrollConsent = true;
+            refreshScrollButtons();
+            startActivityForResult(consent, SCROLL_CONSENT);
+        } catch (RuntimeException failure) {
+            clearScrollRequest();
+            scrollUnavailable();
+        }
+    }
+
+    @Override protected void onActivityResult(int request, int result, Intent data) {
+        super.onActivityResult(request, result, data);
+        if (request != SCROLL_CONSENT || !askingScrollConsent) return;
+        clearScrollRequest();
+        if (result != RESULT_OK || data == null || isFinishing() || ShotMemory.preview() != source) return;
+        if (ProjectionService.acceptConsent(this, result, data)) waitForScrollService();
+        else resumeGrantOnFocus = ProjectionService.hasPendingConsent();
+    }
+
+    private void waitForScrollService() {
+        waitForProjectionUntil = SystemClock.uptimeMillis() + 4000;
+        refreshScrollButtons();
+        scrollHandler.removeCallbacks(continueScroll);
+        scrollHandler.post(continueScroll);
+    }
+
+    private void resumeScrollGrant() {
+        if (!resumeGrantOnFocus || !hasWindowFocus() || isFinishing() || ShotMemory.preview() != source) return;
+        ProjectionService service = ProjectionService.current;
+        if ((service != null && service.ready()) || ProjectionService.resumeConsent(this)) {
+            resumeGrantOnFocus = false;
+            waitForScrollService();
+        }
+    }
+
+    private void startAfterScrollConsent() {
+        if (waitForProjectionUntil == 0 || isFinishing() || isDestroyed()) return;
+        ProjectionService service = ProjectionService.current;
+        if (ShotMemory.preview() != source) {
+            clearScrollRequest();
+        } else if (service != null && service.ready() && (hasWindowFocus() || service.canReadTarget())) {
+            // On Android 14+, choosing one app can bring its task forward
+            // before this editor receives the result.
+            clearScrollRequest();
+            service.startScrollingFromEditor(this, source, scrollUpward);
+            refreshScrollButtons();
+        } else if (SystemClock.uptimeMillis() >= waitForProjectionUntil) {
+            clearScrollRequest();
+            resumeGrantOnFocus = ProjectionService.hasPendingConsent();
+            if (hasWindowFocus() && !resumeGrantOnFocus) scrollUnavailable();
+        } else scrollHandler.postDelayed(continueScroll, 100);
+    }
+
+    private void scrollUnavailable() {
+        Toast.makeText(this, "Не удалось начать захват экрана.", Toast.LENGTH_SHORT).show();
+    }
+
+    private void clearScrollRequest() {
+        scrollHandler.removeCallbacks(continueScroll);
+        askingScrollConsent = false;
+        waitForProjectionUntil = 0;
+        refreshScrollButtons();
+    }
+
+    @Override protected void onResume() {
+        super.onResume();
+        refreshScrollButtons();
+        resumeScrollGrant();
+    }
+
+    @Override public void onWindowFocusChanged(boolean focused) {
+        super.onWindowFocusChanged(focused);
+        if (focused) {
+            refreshScrollButtons();
+            resumeScrollGrant();
+            if (waitForProjectionUntil != 0) {
+                if (ProjectionService.hasPendingConsent()) ProjectionService.resumeConsent(this);
+                scrollHandler.removeCallbacks(continueScroll);
+                scrollHandler.post(continueScroll);
+            }
+        }
+    }
+
+    @Override protected void onSaveInstanceState(Bundle out) {
+        super.onSaveInstanceState(out);
+        out.putBoolean("askingScrollConsent", askingScrollConsent);
+        out.putBoolean("resumeScrollGrant", resumeGrantOnFocus);
+        out.putBoolean("scrollUpward", scrollUpward);
+        out.putBoolean("confirmScroll", scrollConfirmation != null && scrollConfirmation.isShowing()
+                && !askingScrollConsent && waitForProjectionUntil == 0);
+        out.putLong("waitForScrollProjection", waitForProjectionUntil);
+    }
+
+    @Override protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        Bitmap preview = ShotMemory.preview();
+        if (preview != null && preview != source) recreate();
+    }
+
+    private void exportSelection(boolean toDevice) {
+        if (exportProgress != null) return;
+        if (toDevice && saving) {
+            Toast.makeText(this, "Сохранение уже идёт.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        Bitmap result;
+        try {
+            result = crop.selection();
+        } catch (RuntimeException | OutOfMemoryError error) {
+            exportFailed(toDevice);
+            return;
+        }
+        exportProgress = new android.app.AlertDialog.Builder(this)
+                .setMessage(toDevice ? "Сохранение снимка…" : "Копирование снимка…").setCancelable(false).show();
+        if (toDevice) saving = true;
+        try {
+            new Thread(() -> writeSelection(result, toDevice), "SkriNim-PNG").start();
+        } catch (RuntimeException | OutOfMemoryError unavailable) {
+            if (result != source) result.recycle();
+            if (toDevice) saving = false;
+            dismissExportProgress();
+            exportFailed(toDevice);
+        }
+    }
+
+    private void writeSelection(Bitmap result, boolean toDevice) {
+        Context context = getApplicationContext();
+        PngBuffer encoded = null;
+        boolean written = false;
+        try {
+            if (toDevice) written = ScreenshotStorage.save(context, result) != null;
+            else encoded = ShotMemory.encode(result);
+        } catch (IOException | RuntimeException | OutOfMemoryError failure) {
+            // The editor keeps its source and edits if rendering or writing fails.
+        } finally {
+            if (result != source) result.recycle();
+        }
+        final PngBuffer png = encoded;
+        final boolean saved = written;
+        runOnUiThread(() -> {
+            if (toDevice) {
+                saving = false;
+                Toast.makeText(context, saved ? "Сохранено в альбом «Скриншоты»" : "Не удалось сохранить снимок.",
+                        Toast.LENGTH_SHORT).show();
+            }
+            if (isFinishing() || isDestroyed()) return;
+            dismissExportProgress();
+            if (!toDevice) {
+                if (png != null && ShotMemory.copy(this, png)) {
+                    Toast.makeText(this, "Снимок в буфере", Toast.LENGTH_SHORT).show();
+                    finish();
+                } else exportFailed(false);
+            }
+        });
+    }
+
+    private void dismissExportProgress() {
+        if (exportProgress != null) exportProgress.dismiss();
+        exportProgress = null;
+    }
+
+    private void exportFailed(boolean toDevice) {
+        Toast.makeText(this, toDevice ? "Не удалось сохранить снимок." : "Не удалось скопировать снимок.",
+                Toast.LENGTH_SHORT).show();
     }
 
     @Override protected void onDestroy() {
+        scrollHandler.removeCallbacks(continueScroll);
+        if (scrollConfirmation != null) scrollConfirmation.dismiss();
+        dismissExportProgress();
         closeInlineCaption();
         releaseCaptionBack();
         if (textDetectionThread!=null) textDetectionThread.interrupt();
@@ -1676,6 +1945,7 @@ public final class CropActivity extends Activity {
                 look.shape(this, 0xffffffff, 14, false)));
         }
         cropControls.setVisibility(editorTool == Markup.CROP ? View.VISIBLE : View.GONE);
+        refreshScrollButtons();
         updateFormat();
         undo.setEnabled(crop.markup.hasMarks());
         undo.setAlpha(undo.isEnabled() ? 1f : 0.46f);
@@ -1794,6 +2064,7 @@ public final class CropActivity extends Activity {
             float scale = Math.min((float) Math.max(1, w - 2 * pad) / orientation.width,
                                    (float) Math.max(1, h - 2 * pad) / orientation.height);
             zoom.reset();
+            zoom.maxScale = Math.max(8f, 1f / scale);
             float width=fitWidth=scale*orientation.width,height=fitHeight=scale*orientation.height;
             image.set((w-width)/2,(h-height)/2,(w+width)/2,(h+height)/2);
             selected.set(image.left+fraction.left*width,image.top+fraction.top*height,
@@ -1912,12 +2183,15 @@ public final class CropActivity extends Activity {
             invalidate();
         }
 
-        Bitmap selection() {
-            if (image.isEmpty() || selected.isEmpty()) {
-                if (markup.hasMarks() || !orientation.isIdentity() || tilt() != 0)
-                    throw new IllegalStateException("Cannot export transformed image without a crop");
-                return bitmap;
-            }
+        boolean hasEdits() {
+            if (markup.hasMarks() || !orientation.isIdentity() || tilt() != 0) return true;
+            if (image.isEmpty() || selected.isEmpty()) return false;
+            int[] box = selectedPixels();
+            return box[0] != 0 || box[1] != 0
+                    || box[2] != bitmap.getWidth() || box[3] != bitmap.getHeight();
+        }
+
+        private int[] selectedPixels() {
             int[] box=new int[4];
             float l=zoomCrop.isEmpty()?orientedX(selected.left):zoomCrop.left;
             float t=zoomCrop.isEmpty()?orientedY(selected.top):zoomCrop.top;
@@ -1927,9 +2201,22 @@ public final class CropActivity extends Activity {
                     CropFormats.W[format],CropFormats.H[format],box);
             else tiltGeometry.pixels(orientation.width,orientation.height,l,t,r,b,
                     CropFormats.W[format],CropFormats.H[format],box);
+            return box;
+        }
+
+        Bitmap selection() {
+            if (image.isEmpty() || selected.isEmpty()) {
+                if (markup.hasMarks() || !orientation.isIdentity() || tilt() != 0)
+                    throw new IllegalStateException("Cannot export transformed image without a crop");
+                return bitmap;
+            }
+            int[] box = selectedPixels();
             int left=box[0],top=box[1],width=box[2]-left,height=box[3]-top;
-            if (!markup.hasMarks() && orientation.isIdentity() && tilt() == 0)
+            if (!markup.hasMarks() && orientation.isIdentity() && tilt() == 0) {
+                if (left == 0 && top == 0 && width == bitmap.getWidth() && height == bitmap.getHeight())
+                    return bitmap;
                 return Bitmap.createBitmap(bitmap,left,top,width,height);
+            }
             Bitmap result=Bitmap.createBitmap(width,height,Bitmap.Config.ARGB_8888);
             try {
                 Canvas output=new Canvas(result);
@@ -1951,6 +2238,14 @@ public final class CropActivity extends Activity {
 
         @Override protected void onDraw(Canvas canvas) {
             super.onDraw(canvas);
+            if (canvas.isHardwareAccelerated() && (bitmap.getWidth() > canvas.getMaximumBitmapWidth()
+                    || bitmap.getHeight() > canvas.getMaximumBitmapHeight())) {
+                // Only the screen-sized viewport becomes a texture. Software drawing can sample
+                // the full image and its full-resolution markup with the current zoom and crop.
+                setLayerType(View.LAYER_TYPE_SOFTWARE, null);
+                postInvalidateOnAnimation();
+                return;
+            }
             if (image.isEmpty() || selected.isEmpty()) return;
             paint.setStyle(Paint.Style.FILL);
             paint.setColor(Color.WHITE);

@@ -13,6 +13,7 @@ public final class CaptureTile extends TileService {
         if (tile == null) return;
         ProjectionService service = ProjectionService.current;
         boolean active = service != null && service.ready();
+        tile.setLabel(getString(R.string.tile_name));
         tile.setState(active ? Tile.STATE_ACTIVE : Tile.STATE_INACTIVE);
         tile.setSubtitle(active ? "Нажми, чтобы сделать снимок" : "Начать сеанс захвата");
         tile.updateTile();

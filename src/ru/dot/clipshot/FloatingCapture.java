@@ -26,7 +26,13 @@ final class FloatingCapture {
     private int size;
     private float fx,fy,startX,startY;
     private int startLeft,startTop,pointer=-1;
-    private boolean dragging;
+    private boolean dragging, held;
+    private final Runnable hold = () -> {
+        if (pointer != -1 && !dragging && button != null) {
+            held = true;
+            button.performLongClick();
+        }
+    };
 
     FloatingCapture(Context app,Runnable tap) {
         this.app=app;
@@ -74,7 +80,11 @@ final class FloatingCapture {
             view.setImageResource(android.R.drawable.ic_menu_camera);
             view.setColorFilter(look.onAccent);
             view.setScaleType(android.widget.ImageView.ScaleType.FIT_CENTER);
-            view.setContentDescription("Сделать снимок экрана");
+            view.setContentDescription("Сделать снимок экрана. Удерживай для настроек.");
+            view.setOnLongClickListener(v -> {
+                SetupActivity.openSettings(app);
+                return true;
+            });
             view.setOnClickListener(v -> tap.run());
             int slop=ViewConfiguration.get(window).getScaledTouchSlop();
             view.setOnTouchListener((v,event) -> touch(view,event,slop));
@@ -101,6 +111,7 @@ final class FloatingCapture {
     }
 
     private void clear() {
+        if (button != null) button.removeCallbacks(hold);
         button=null;
         windows=null;
         params=null;
@@ -118,6 +129,9 @@ final class FloatingCapture {
         if (action==MotionEvent.ACTION_DOWN) {
             pointer=e.getPointerId(0);
             dragging=false;
+            held=false;
+            view.removeCallbacks(hold);
+            view.postDelayed(hold, ViewConfiguration.getLongPressTimeout());
             startX=e.getRawX();
             startY=e.getRawY();
             startLeft=params.x;
@@ -126,15 +140,16 @@ final class FloatingCapture {
             return true;
         }
         int index=e.findPointerIndex(pointer);
-        if (action==MotionEvent.ACTION_CANCEL || index<0 ||
+        if (action==MotionEvent.ACTION_CANCEL || action==MotionEvent.ACTION_POINTER_DOWN || index<0 ||
             (action==MotionEvent.ACTION_POINTER_UP && e.getActionIndex()==index)) {
             finishDrag(view,false);
             return true;
         }
-        if (action==MotionEvent.ACTION_MOVE) {
+        if (!held && action==MotionEvent.ACTION_MOVE) {
             float dx=e.getRawX(index)-startX,dy=e.getRawY(index)-startY;
             if (!dragging && Math.hypot(dx,dy)>slop) {
                 dragging=true;
+                view.removeCallbacks(hold);
                 view.setPressed(false);
             }
             if (dragging) {
@@ -150,11 +165,13 @@ final class FloatingCapture {
     }
 
     private void finishDrag(ImageButton view,boolean up) {
+        view.removeCallbacks(hold);
+        if (pointer == -1) return;
         pointer=-1;
         view.setPressed(false);
         if (dragging) app.getSharedPreferences(PREFS,Context.MODE_PRIVATE).edit()
                 .putFloat(X,fx).putFloat(Y,fy).apply();
-        else if (up) view.performClick();
+        else if (up && !held) view.performClick();
     }
 
     private void position() {

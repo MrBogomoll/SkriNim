@@ -20,6 +20,13 @@ public class Canvas {
         drawBitmap(overlay,0,0,null);
     }
     private Bitmap dest(){return layer==null?base:layer;}
+    public void drawBitmap(Bitmap b,Rect src,Rect dst,Paint p){
+        if (src==null) src=new Rect(0,0,b.width,b.height);
+        if (dst.right-dst.left!=src.right-src.left || dst.bottom-dst.top!=src.bottom-src.top)
+            throw new AssertionError("host canvas does not implement resampling");
+        for(int y=src.top;y<src.bottom;y++) for(int x=src.left;x<src.right;x++)
+            put(dst.left+x-src.left,dst.top+y-src.top,b.getPixel(x,y),null);
+    }
     public void drawBitmap(Bitmap b,float x,float y,Paint p){
         bitmapDraws++;
         for(int cy=0;cy<b.height;cy++) for(int cx=0;cx<b.width;cx++)

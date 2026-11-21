@@ -22,12 +22,12 @@ public final class ShotProvider extends ContentProvider {
         String[] columns = projection == null
             ? new String[]{OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE} : projection;
         MatrixCursor cursor = new MatrixCursor(columns, 1);
-        byte[] png = ShotMemory.find(uri);
+        PngBuffer png = ShotMemory.find(uri);
         if (png != null) {
             Object[] values = new Object[columns.length];
             for (int i = 0; i < columns.length; i++) {
                 if (OpenableColumns.DISPLAY_NAME.equals(columns[i])) values[i] = "Скриншот.png";
-                if (OpenableColumns.SIZE.equals(columns[i])) values[i] = png.length;
+                if (OpenableColumns.SIZE.equals(columns[i])) values[i] = png.size();
             }
             cursor.addRow(values);
         }
@@ -35,14 +35,14 @@ public final class ShotProvider extends ContentProvider {
     }
 
     @Override public ParcelFileDescriptor openFile(Uri uri, String mode) throws FileNotFoundException {
-        byte[] png = ShotMemory.find(uri);
+        PngBuffer png = ShotMemory.find(uri);
         if (!"r".equals(mode) || png == null) throw new FileNotFoundException("Снимок недоступен");
         try {
             ParcelFileDescriptor[] pipe = ParcelFileDescriptor.createPipe();
             writes.execute(() -> {
                 try (ParcelFileDescriptor.AutoCloseOutputStream output =
                         new ParcelFileDescriptor.AutoCloseOutputStream(pipe[1])) {
-                    output.write(png);
+                    png.writeTo(output);
                 } catch (IOException ignored) {}
             });
             return pipe[0];
