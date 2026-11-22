@@ -39,10 +39,13 @@ public final class SetupActivity extends Activity {
     private final Runnable refreshUpdates = this::renderUpdates;
 
     static void openSettings(Context context) {
+        int flags = Intent.FLAG_ACTIVITY_SINGLE_TOP;
+        if (!(context instanceof Activity)) {
+            flags |= Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP;
+        }
         try {
             context.startActivity(new Intent(context, SetupActivity.class).setAction(OPEN_SETTINGS)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP
-                            | Intent.FLAG_ACTIVITY_CLEAR_TOP));
+                    .addFlags(flags));
         } catch (ActivityNotFoundException | SecurityException unavailable) {
             Toast.makeText(context, "Не удалось открыть настройки SkriNim.", Toast.LENGTH_SHORT).show();
         }
@@ -183,7 +186,8 @@ public final class SetupActivity extends Activity {
             fullScreen.setChecked(CaptureScope.fullScreen(this));
             fullScreen.setOnCheckedChangeListener((button, checked) -> CaptureScope.setFullScreen(this, checked));
             scope.addView(fullScreen, new LinearLayout.LayoutParams(-1, -2));
-            detail(scope, "Если тумблер выключен, в окне Android можно выбрать весь экран или отдельное приложение.");
+            detail(scope, "Включено — по умолчанию захватывается весь экран.\n"
+                    + "Выключено — по умолчанию предлагается захват отдельного приложения.");
         }
 
         LinearLayout longShot = card(settings);

@@ -168,23 +168,13 @@ public final class CropActivity extends Activity {
         LinearLayout header = new LinearLayout(this);
         header.setGravity(Gravity.CENTER_VERTICAL);
         header.setPadding(dp(14), dp(6), dp(12), dp(4));
-        ImageButton save = new ImageButton(this);
-        save.setImageResource(R.drawable.save_screenshot);
-        save.setImageTintList(android.content.res.ColorStateList.valueOf(look.accent));
-        save.setBackground(new android.graphics.drawable.RippleDrawable(
-                android.content.res.ColorStateList.valueOf(look.dark ? 0x34ffffff : 0x24001c40),
-                look.shape(this, look.tint, 14, false), null));
-        save.setPadding(dp(12),dp(12),dp(12),dp(12));
-        save.setContentDescription("Сохранить снимок");
-        save.setTooltipText("Сохранить в папку скриншотов");
+        ImageButton save = headerIcon(header, R.drawable.save_screenshot, "Сохранить снимок",
+                "Сохранить в папку скриншотов");
         save.setOnClickListener(v -> {
             if (crop.hasDraft()) {
                 Toast.makeText(this, "Сначала нажми «Применить», чтобы сохранить правку.", Toast.LENGTH_SHORT).show();
             } else exportSelection(true);
         });
-        LinearLayout.LayoutParams saveSize = new LinearLayout.LayoutParams(dp(48), dp(48));
-        saveSize.rightMargin = dp(6);
-        header.addView(save, saveSize);
         TextView title = new TextView(this);
         title.setText("Снимок");
         title.setSingleLine(true);
@@ -192,6 +182,8 @@ public final class CropActivity extends Activity {
         title.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
         title.setTextColor(look.text);
         header.addView(title, new LinearLayout.LayoutParams(0, -2, 1f));
+        ImageButton settings = headerIcon(header, R.drawable.settings, "Настройки SkriNim", "Настройки");
+        settings.setOnClickListener(v -> SetupActivity.openSettings(this));
         Button stop = look.button(this, "×  Завершить сеанс", look.dangerTint, look.danger);
         stop.setContentDescription("Завершить сеанс захвата экрана");
         stop.setOnClickListener(v -> {
@@ -563,6 +555,22 @@ public final class CropActivity extends Activity {
 
     private int dp(float value) {
         return Math.round(value * getResources().getDisplayMetrics().density);
+    }
+
+    private ImageButton headerIcon(LinearLayout row, int icon, String description, String tooltip) {
+        ImageButton button = new ImageButton(this);
+        button.setImageResource(icon);
+        button.setImageTintList(android.content.res.ColorStateList.valueOf(look.accent));
+        button.setBackground(new android.graphics.drawable.RippleDrawable(
+                android.content.res.ColorStateList.valueOf(look.dark ? 0x34ffffff : 0x24001c40),
+                look.shape(this, look.tint, 14, false), null));
+        button.setPadding(dp(12), dp(12), dp(12), dp(12));
+        button.setContentDescription(description);
+        button.setTooltipText(tooltip);
+        LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(dp(48), dp(48));
+        size.setMarginEnd(dp(6));
+        row.addView(button, size);
+        return button;
     }
 
     private Button toolButton(LinearLayout row, String glyph, String label) {
