@@ -61,6 +61,9 @@ final class Look {
         b.setMinimumWidth(0);
         b.setMinimumHeight(dp(c, 48));
         b.setPadding(dp(c, 10), dp(c, 6), dp(c, 10), dp(c, 6));
+        b.setStateListAnimator(null);
+        b.setElevation(0);
+        b.setTranslationZ(0);
         b.setBackground(new RippleDrawable(ColorStateList.valueOf(dark ? 0x34ffffff : 0x24001c40),
                 shape(c, bg, 16, false), shape(c, 0xffffffff, 16, false)));
         return b;

@@ -256,15 +256,22 @@ final class Markup {
         selectedCount = 0;
     }
     boolean hasMarks() { return !marks.isEmpty(); }
+
+    void clear() {
+        cancel();
+        marks.clear();
+        committed = null;
+        committedCanvas = null;
+    }
+
     void undo() {
         if (!hasMarks()) return;
-        cancel();
-        marks.remove(marks.size() - 1);
-        if (marks.isEmpty()) {
-            committed = null;
-            committedCanvas = null;
+        if (marks.size() == 1) {
+            clear();
             return;
         }
+        cancel();
+        marks.remove(marks.size() - 1);
         // History only needs replay for Undo, never during gesture previews or exports.
         committed.eraseColor(0);
         for (Mark mark : marks) {

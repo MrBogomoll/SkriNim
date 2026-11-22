@@ -1,16 +1,39 @@
 package ru.dot.clipshot;
 
 import android.app.PendingIntent;
+import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.os.Build;
 import android.service.quicksettings.TileService;
 import android.service.quicksettings.Tile;
 import android.widget.Toast;
 
 public final class CaptureTile extends TileService {
+    private static final String ADDED = "added";
+
+    static SharedPreferences presence(Context context) {
+        return context.getSharedPreferences("capture_tile", Context.MODE_PRIVATE);
+    }
+
+    static boolean isAdded(SharedPreferences state) {
+        return state.getBoolean(ADDED, false);
+    }
+
+    static void rememberPresence(Context context, boolean added) {
+        SharedPreferences state = presence(context);
+        if (isAdded(state) != added) state.edit().putBoolean(ADDED, added).apply();
+    }
+
+    @Override public void onTileAdded() { rememberPresence(this, true); }
+
+    @Override public void onTileRemoved() { rememberPresence(this, false); }
+
     @Override public void onStartListening() {
         Tile tile = getQsTile();
         if (tile == null) return;
+        // Also discover tiles that were already added before this setting existed.
+        rememberPresence(this, true);
         ProjectionService service = ProjectionService.current;
         boolean active = service != null && service.ready();
         tile.setLabel(getString(R.string.tile_name));

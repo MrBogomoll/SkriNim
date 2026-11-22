@@ -9,6 +9,7 @@ import android.content.ActivityNotFoundException;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.graphics.Typeface;
@@ -25,6 +26,7 @@ import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
+import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -50,8 +52,11 @@ public final class SetupActivity extends Activity {
     private static final int OVERLAY_PERMISSION = 82;
     private static final String ASKING_OVERLAY = "setup.asking_overlay";
     private static final String[] TAB_NAMES = {"Снимок", "Настройки"};
-    private TextView state;
-    private Button session, scrollAccess;
+    private TextView state, tileStatus;
+    private Button session, scrollAccess, addTileButton;
+    private SharedPreferences tilePresence;
+    private final SharedPreferences.OnSharedPreferenceChangeListener tileChanged =
+            (preferences, key) -> refreshTile();
     private Look look;
     private IdleSettings idle;
     private Button interval;
@@ -112,9 +117,7 @@ public final class SetupActivity extends Activity {
         LinearLayout capture = card(shots);
         state = label("", 19, look.text, true);
         capture.addView(state);
-        detail(capture, Build.VERSION.SDK_INT >= 34
-                ? "Выбери в системном окне одно приложение или весь экран. Для снимка нажми плитку или плавающую кнопку."
-                : "Разреши захват экрана. Для снимка нажми плитку или плавающую кнопку.");
+        detail(capture, "Подтверди захват в системном окне. Для снимка нажми плитку или плавающую кнопку.");
         session = look.button(this, "", look.accent, look.onAccent);
         addButton(capture, session);
         session.setOnClickListener(v -> {
@@ -130,10 +133,11 @@ public final class SetupActivity extends Activity {
 
         LinearLayout tile = card(shots);
         tile.addView(label("Плитка в шторке", 19, look.text, true));
-        detail(tile, "Нажми плитку в нужном приложении, обрежь снимок и скопируй его.");
-        Button add = look.button(this, "Добавить плитку", look.tint, look.text);
-        addButton(tile, add);
-        add.setOnClickListener(v -> addTile());
+        tileStatus = detail(tile, "");
+        addTileButton = look.button(this, "Добавить плитку", look.tint, look.text);
+        addButton(tile, addTileButton);
+        addTileButton.setOnClickListener(v -> addTile());
+        tilePresence = CaptureTile.presence(this);
 
         LinearLayout appearance = card(settings);
         appearance.addView(label("Тема", 19, look.text, true));
@@ -164,6 +168,23 @@ public final class SetupActivity extends Activity {
             ProjectionService.refreshIdleTimer();
             refreshInterval();
         });
+
+        if (CaptureScope.supportsAppCapture()) {
+            LinearLayout scope = card(settings);
+            scope.addView(label("Область захвата", 19, look.text, true));
+            Switch fullScreen = new Switch(this);
+            fullScreen.setText("Весь экран по умолчанию");
+            fullScreen.setTextColor(look.text);
+            fullScreen.setSwitchPadding(dp(12));
+            fullScreen.setMinimumHeight(dp(48));
+            int[][] states = {{android.R.attr.state_checked}, {}};
+            fullScreen.setThumbTintList(new ColorStateList(states, new int[]{look.accent, look.muted}));
+            fullScreen.setTrackTintList(new ColorStateList(states, new int[]{look.accent, look.border}));
+            fullScreen.setChecked(CaptureScope.fullScreen(this));
+            fullScreen.setOnCheckedChangeListener((button, checked) -> CaptureScope.setFullScreen(this, checked));
+            scope.addView(fullScreen, new LinearLayout.LayoutParams(-1, -2));
+            detail(scope, "Если тумблер выключен, в окне Android можно выбрать весь экран или отдельное приложение.");
+        }
 
         LinearLayout longShot = card(settings);
         longShot.addView(label("Прокрутка", 19, look.text, true));
@@ -371,9 +392,12 @@ public final class SetupActivity extends Activity {
     @Override protected void onStart() {
         super.onStart();
         updates.observe(refreshUpdates);
+        tilePresence.registerOnSharedPreferenceChangeListener(tileChanged);
+        refreshTile();
     }
 
     @Override protected void onStop() {
+        tilePresence.unregisterOnSharedPreferenceChangeListener(tileChanged);
         updates.remove(refreshUpdates);
         super.onStop();
     }
@@ -444,14 +468,23 @@ public final class SetupActivity extends Activity {
         refreshInterval();
     }
 
+    private void refreshTile() {
+        boolean added = CaptureTile.isAdded(tilePresence);
+        tileStatus.setText(added ? "Плитка добавлена. Нажми её в шторке, чтобы сделать снимок."
+                : "Добавь плитку, чтобы делать снимки из шторки.");
+        addTileButton.setVisibility(added ? View.GONE : View.VISIBLE);
+    }
+
     private void addTile() {
         String title = getString(R.string.tile_name);
         if (Build.VERSION.SDK_INT >= 33) {
             try {
                 getSystemService(StatusBarManager.class).requestAddTileService(
                     new ComponentName(this, CaptureTile.class), title, Icon.createWithResource(this, R.drawable.tile), getMainExecutor(), n -> {
-                            if (n != StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ADDED
-                                && n != StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ALREADY_ADDED) editHint(title);
+                            if (n == StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ADDED
+                                || n == StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ALREADY_ADDED) {
+                                CaptureTile.rememberPresence(this, true);
+                            } else editHint(title);
                         });
             } catch (RuntimeException ex) { editHint(title); }
         } else editHint(title);
@@ -499,10 +532,11 @@ public final class SetupActivity extends Activity {
         return label;
     }
 
-    private void detail(LinearLayout card, String text) {
+    private TextView detail(LinearLayout card, String text) {
         TextView description = label(text, 15, look.muted, false);
         description.setPadding(0, dp(4), 0, 0);
         card.addView(description);
+        return description;
     }
 
     private void addButton(LinearLayout card, Button button) {

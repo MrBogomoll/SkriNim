@@ -3,7 +3,6 @@ package ru.dot.clipshot;
 import android.app.Activity;
 import android.app.KeyguardManager;
 import android.content.Intent;
-import android.media.projection.MediaProjectionManager;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -90,14 +89,7 @@ public final class CaptureActivity extends Activity {
                 }
                 return;
             }
-            asking = true;
-            try {
-                MediaProjectionManager manager = getSystemService(MediaProjectionManager.class);
-                startActivityForResult(manager.createScreenCaptureIntent(), CAPTURE_CONSENT);
-            } catch (RuntimeException e) {
-                Toast.makeText(this, "Не удалось открыть системный запрос", Toast.LENGTH_SHORT).show();
-                finishQuietly();
-            }
+            requestConsent();
             return;
         }
         if (getIntent().getBooleanExtra(CONSENT_ONLY, false)) { finishQuietly(); return; }
@@ -120,6 +112,16 @@ public final class CaptureActivity extends Activity {
             finishQuietly();
         });
     }
+    private void requestConsent() {
+        asking = true;
+        try {
+            startActivityForResult(CaptureScope.consentIntent(this), CAPTURE_CONSENT);
+        } catch (RuntimeException failure) {
+            Toast.makeText(this, "Не удалось открыть системный запрос", Toast.LENGTH_SHORT).show();
+            finishQuietly();
+        }
+    }
+
     @Override protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
         if (request != CAPTURE_CONSENT || !asking) return;

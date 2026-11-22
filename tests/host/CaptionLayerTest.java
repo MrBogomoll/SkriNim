@@ -1,6 +1,7 @@
 package ru.dot.clipshot;
 
 import android.graphics.Bitmap;
+import android.graphics.Canvas;
 import android.graphics.Paint;
 
 public final class CaptionLayerTest {
@@ -20,6 +21,20 @@ public final class CaptionLayerTest {
         if (markup.colorAt(15,15)!=ink) throw new AssertionError("caption vanished after undo replay");
         markup.undo();
         if (markup.hasMarks() || markup.colorAt(15,15)!=background) throw new AssertionError("undo left a caption");
-        System.out.println("Caption layer: commit, eraser, replay and undo OK");
+
+        markup.addStamp(canvas -> canvas.drawRect(8,10,24,20,paint));
+        markup.begin(Markup.MOSAIC,15,15,0,12,8);
+        markup.finish();
+        markup.begin(Markup.PEN,30,30,ink,4);
+        markup.clear();
+        markup.finish();
+        markup.undo();
+        Bitmap output=Bitmap.createBitmap(48,48,Bitmap.Config.ARGB_8888);
+        markup.draw(new Canvas(output), true);
+        if (markup.hasMarks() || markup.colorAt(15,15)!=background
+                || output.getPixel(15,15)!=0 || output.getPixel(30,30)!=0) {
+            throw new AssertionError("clear left saved marks or a pending stroke");
+        }
+        System.out.println("Caption layer: commit, eraser, replay, undo and clear OK");
     }
 }

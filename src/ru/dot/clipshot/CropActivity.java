@@ -9,7 +9,6 @@ import android.graphics.Color;
 import android.graphics.Matrix;
 import android.graphics.Paint;
 import android.graphics.RectF;
-import android.media.projection.MediaProjectionManager;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -17,6 +16,7 @@ import android.os.SystemClock;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewConfiguration;
 import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.ImageButton;
@@ -54,6 +54,10 @@ public final class CropActivity extends Activity {
     private static final int SCROLL_CONSENT = 46;
     private final Handler scrollHandler = new Handler(Looper.getMainLooper());
     private final Runnable continueScroll = this::startAfterScrollConsent;
+    private static final long RESET_HOLD_MS = 3000;
+    private static final int CROP_BUTTON_GAP_DP = 8;
+    private boolean undoHeld;
+    private final Runnable resetAfterHold = this::resetEdits;
     private boolean askingScrollConsent, scrollUpward, resumeGrantOnFocus;
     private android.app.AlertDialog scrollConfirmation;
     private long waitForProjectionUntil;
@@ -226,8 +230,9 @@ public final class CropActivity extends Activity {
         addTool(markings, Markup.MOSAIC, "▦", "Мозаика");
         addTool(markings, Markup.TEXT, "T", "Текст");
         undo = toolButton(markings, "↶", "Назад");
-        undo.setContentDescription("Отменить последнюю пометку");
+        undo.setContentDescription("Отменить последнюю пометку. Удерживай 3 секунды для сброса всей разметки.");
         undo.setOnClickListener(v -> { crop.markup.undo(); redrawTools(); crop.invalidate(); });
+        bindUndoHold();
         FrameLayout toolSlot=new FrameLayout(this);
         toolSelectors=markings;
         toolSlot.addView(markings,new FrameLayout.LayoutParams(-1,-1));
@@ -241,7 +246,7 @@ public final class CropActivity extends Activity {
         FrameLayout options = new FrameLayout(this);
         options.addView(makeStyleControls(), new FrameLayout.LayoutParams(-1, -1));
         scrollActions = new LinearLayout(this);
-        scrollActions.setPadding(dp(8), 0, dp(8), 0);
+        scrollActions.setPadding(dp(11), 0, dp(11), 0);
         scrollActions.setBaselineAligned(false);
         scrollDownButton = scrollAction("Прокрутка вниз", "Добавить к снимку часть страницы ниже", () -> requestScroll(false));
         scrollUpButton = scrollAction("Прокрутка вверх", "Добавить к снимку часть страницы выше", () -> requestScroll(true));
@@ -287,7 +292,8 @@ public final class CropActivity extends Activity {
         LinearLayout draftActions=new LinearLayout(this);
         draftActions.setGravity(Gravity.CENTER_VERTICAL);
         draftActions.setPadding(dp(8),dp(4),dp(8),dp(3));
-        compactDraftAction(draftActions,"Отмена","Отменить размещение",look.tint,look.text,1f,() -> finishCaption(false));
+        compactDraftAction(draftActions, "Отмена", "Отменить размещение",
+                look.tint, look.text, 1f, () -> finishCaption(false));
         compactDraftAction(draftActions,"✓  Применить","Применить разметку",look.accent,look.onAccent,1.4f,() -> finishCaption(true));
         captionActions.addView(draftActions,new LinearLayout.LayoutParams(-1,-1));
         actionSlot.addView(captionActions,new FrameLayout.LayoutParams(-1,-1));
@@ -322,7 +328,7 @@ public final class CropActivity extends Activity {
         button.setContentDescription(description);
         button.setOnClickListener(v -> tap.run());
         LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(0, -1, 1f);
-        size.setMargins(dp(3), 0, dp(3), 0);
+        if (scrollActions.getChildCount() > 0) size.setMarginStart(dp(CROP_BUTTON_GAP_DP));
         scrollActions.addView(button, size);
         return button;
     }
@@ -373,12 +379,11 @@ public final class CropActivity extends Activity {
             else resumeGrantOnFocus = ProjectionService.hasPendingConsent();
             return;
         }
+        if (isFinishing() || ShotMemory.preview() != source) return;
+        askingScrollConsent = true;
+        refreshScrollButtons();
         try {
-            MediaProjectionManager manager = getSystemService(MediaProjectionManager.class);
-            Intent consent = manager.createScreenCaptureIntent();
-            askingScrollConsent = true;
-            refreshScrollButtons();
-            startActivityForResult(consent, SCROLL_CONSENT);
+            startActivityForResult(CaptureScope.consentIntent(this), SCROLL_CONSENT);
         } catch (RuntimeException failure) {
             clearScrollRequest();
             scrollUnavailable();
@@ -455,7 +460,7 @@ public final class CropActivity extends Activity {
                 scrollHandler.removeCallbacks(continueScroll);
                 scrollHandler.post(continueScroll);
             }
-        }
+        } else cancelUndoHold();
     }
 
     @Override protected void onSaveInstanceState(Bundle out) {
@@ -543,6 +548,7 @@ public final class CropActivity extends Activity {
     }
 
     @Override protected void onDestroy() {
+        cancelUndoHold();
         scrollHandler.removeCallbacks(continueScroll);
         if (scrollConfirmation != null) scrollConfirmation.dismiss();
         dismissExportProgress();
@@ -910,7 +916,7 @@ public final class CropActivity extends Activity {
     private LinearLayout makeCropControls() {
         cropControls = new LinearLayout(this);
         cropControls.setGravity(Gravity.CENTER_VERTICAL);
-        cropControls.setPadding(dp(8), 0, dp(8), 0);
+        cropControls.setPadding(dp(11), 0, dp(11), 0);
         formatButton = cropButton("Свободно", "Пропорции кадра", 1f, () -> {});
         bindSlideMenu(formatButton,slide -> choose(formatButton,"Пропорции кадра",
                 CropFormats.NAMES,null,crop.format,3,index -> {
@@ -939,7 +945,7 @@ public final class CropActivity extends Activity {
         button.setOnClickListener(v -> click.run());
         button.setAutoSizeTextTypeUniformWithConfiguration(9,14,1,android.util.TypedValue.COMPLEX_UNIT_SP);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0,dp(48),weight>0?1.8f:1f);
-        lp.setMargins(dp(3),0,dp(3),0);
+        if (cropControls.getChildCount() > 0) lp.setMarginStart(dp(CROP_BUTTON_GAP_DP));
         cropControls.addView(button,lp);
         return button;
     }
@@ -1975,6 +1981,56 @@ public final class CropActivity extends Activity {
                 : new LinearLayout.LayoutParams(0, -2, weight);
         size.setMargins(dp(3), 0, dp(3), 0);
         row.addView(button, size);
+    }
+
+    private void bindUndoHold() {
+        int slop = ViewConfiguration.get(this).getScaledTouchSlop();
+        undo.setOnTouchListener((view, event) -> {
+            switch (event.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    cancelUndoHold();
+                    undoHeld = true;
+                    view.setPressed(true);
+                    scrollHandler.postAtTime(resetAfterHold, event.getDownTime() + RESET_HOLD_MS);
+                    break;
+                case MotionEvent.ACTION_MOVE:
+                    float x = event.getX(), y = event.getY();
+                    if (x < -slop || x >= view.getWidth() + slop ||
+                            y < -slop || y >= view.getHeight() + slop) cancelUndoHold();
+                    break;
+                case MotionEvent.ACTION_UP:
+                    if (undoHeld) {
+                        if (event.getEventTime() - event.getDownTime() >= RESET_HOLD_MS) resetEdits();
+                        else {
+                            cancelUndoHold();
+                            view.performClick();
+                        }
+                    }
+                    break;
+                case MotionEvent.ACTION_POINTER_DOWN:
+                case MotionEvent.ACTION_CANCEL:
+                    cancelUndoHold();
+                    break;
+            }
+            return true;
+        });
+    }
+
+    private void cancelUndoHold() {
+        scrollHandler.removeCallbacks(resetAfterHold);
+        if (undoHeld) undo.setPressed(false);
+        undoHeld = false;
+    }
+
+    private void resetEdits() {
+        if (!undoHeld) return;
+        cancelUndoHold();
+        if (!undo.isShown() || !undo.isEnabled() || !hasWindowFocus() || isFinishing()) return;
+        undo.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS);
+        crop.markup.clear();
+        redrawTools();
+        crop.invalidate();
+        Toast.makeText(this, "Разметка сброшена, кадрирование сохранено", Toast.LENGTH_SHORT).show();
     }
 
     private final class CropView extends View {
