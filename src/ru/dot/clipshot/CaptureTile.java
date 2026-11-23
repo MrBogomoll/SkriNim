@@ -29,13 +29,27 @@ public final class CaptureTile extends TileService {
 
     @Override public void onTileRemoved() { rememberPresence(this, false); }
 
+    private final Runnable refreshTile = this::refreshTile;
+
     @Override public void onStartListening() {
+        ProjectionService.observeSession(refreshTile);
+    }
+
+    @Override public void onStopListening() {
+        ProjectionService.removeSessionListener(refreshTile);
+    }
+
+    @Override public void onDestroy() {
+        ProjectionService.removeSessionListener(refreshTile);
+        super.onDestroy();
+    }
+
+    private void refreshTile() {
         Tile tile = getQsTile();
         if (tile == null) return;
         // Also discover tiles that were already added before this setting existed.
         rememberPresence(this, true);
-        ProjectionService service = ProjectionService.current;
-        boolean active = service != null && service.ready();
+        boolean active = ProjectionService.isRunning();
         tile.setLabel(getString(R.string.tile_name));
         tile.setState(active ? Tile.STATE_ACTIVE : Tile.STATE_INACTIVE);
         tile.setSubtitle(active ? "Нажми, чтобы сделать снимок" : "Начать сеанс захвата");

@@ -120,16 +120,17 @@ public final class SetupActivity extends Activity {
         LinearLayout capture = card(shots);
         state = label("", 19, look.text, true);
         capture.addView(state);
-        detail(capture, "Подтверди захват в системном окне. Для снимка нажми плитку или плавающую кнопку.");
+        String captureHint = "Подтверди захват в системном окне. Для снимка нажми плитку или плавающую кнопку.";
+        if (Build.VERSION.SDK_INT >= 33)
+            captureHint += " Уведомление позволяет остановить сеанс из шторки.";
+        detail(capture, captureHint);
         session = look.button(this, "", look.accent, look.onAccent);
         addButton(capture, session);
         session.setOnClickListener(v -> {
-            if (isRunning()) {
+            if (ProjectionService.isRunning()) {
                 stopService(new Intent(this, ProjectionService.class));
-                setSession(false);
             } else if (ProjectionService.hasPendingConsent()) {
                 ProjectionService.resumeConsent(this);
-                state.postDelayed(refresh, 450);
             } else startActivity(new Intent(this, CaptureActivity.class)
                     .putExtra(CaptureActivity.CONSENT_ONLY, true));
         });
@@ -319,7 +320,7 @@ public final class SetupActivity extends Activity {
         else {
             bubbleStatus.setVisibility(View.VISIBLE);
             bubbleStatus.setText(!allowed?"Нужно разрешение «Поверх других приложений»."
-                    :isRunning()?"Кнопка доступна на главном экране и поверх приложений."
+                    :ProjectionService.isRunning()?"Кнопка доступна на главном экране и поверх приложений."
                     :"Начни сеанс захвата, чтобы показать кнопку.");
         }
     }
@@ -395,12 +396,14 @@ public final class SetupActivity extends Activity {
 
     @Override protected void onStart() {
         super.onStart();
+        ProjectionService.observeSession(refreshSession);
         updates.observe(refreshUpdates);
         tilePresence.registerOnSharedPreferenceChangeListener(tileChanged);
         refreshTile();
     }
 
     @Override protected void onStop() {
+        ProjectionService.removeSessionListener(refreshSession);
         tilePresence.unregisterOnSharedPreferenceChangeListener(tileChanged);
         updates.remove(refreshUpdates);
         super.onStop();
@@ -555,36 +558,35 @@ public final class SetupActivity extends Activity {
         Toast.makeText(this, "Открой шторку → редактирование плиток → «" + title + "»", Toast.LENGTH_LONG).show();
     }
 
-    private boolean isRunning() {
-        return ProjectionService.current != null && ProjectionService.current.ready();
-    }
+    private final Runnable refreshSession = this::refreshSession;
+    private final Runnable refreshScrollAccess = () -> scrollAccess.setText(ScrollGestureService.current == null
+            ? "Разрешить прокрутку" : "Прокрутка включена · Настройки");
 
-    private void setSession(boolean running) {
+    private void refreshSession() {
+        boolean running = ProjectionService.isRunning();
         state.setText(running ? "Сеанс активен" : "Сеанс не запущен");
         session.setText(running ? "Остановить сеанс" : "Начать сеанс");
-        scrollAccess.setText(ScrollGestureService.current == null
-                ? "Разрешить прокрутку" : "Прокрутка включена · Настройки");
         refreshBubble();
     }
 
     @Override public void onResume() {
         super.onResume();
-        setSession(isRunning());
-        state.postDelayed(refresh, 450);
+        refreshSession();
+        refreshScrollAccess.run();
+        // Accessibility may still be binding when the system settings screen closes.
+        scrollAccess.postDelayed(refreshScrollAccess, 450);
+    }
+
+    @Override public void onPause() {
+        scrollAccess.removeCallbacks(refreshScrollAccess);
+        super.onPause();
     }
 
     @Override public void onWindowFocusChanged(boolean focused) {
         super.onWindowFocusChanged(focused);
         if (focused && state != null && ProjectionService.hasPendingConsent()) {
             ProjectionService.resumeConsent(this);
-            state.postDelayed(refresh, 450);
         }
     }
 
-    private final Runnable refresh = () -> setSession(isRunning());
-
-    @Override public void onPause() {
-        state.removeCallbacks(refresh);
-        super.onPause();
-    }
 }
