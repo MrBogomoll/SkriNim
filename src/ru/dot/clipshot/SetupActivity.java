@@ -128,7 +128,7 @@ public final class SetupActivity extends Activity {
         addButton(capture, session);
         session.setOnClickListener(v -> {
             if (ProjectionService.isRunning()) {
-                stopService(new Intent(this, ProjectionService.class));
+                ProjectionService.stopSession(this);
             } else if (ProjectionService.hasPendingConsent()) {
                 ProjectionService.resumeConsent(this);
             } else startActivity(new Intent(this, CaptureActivity.class)

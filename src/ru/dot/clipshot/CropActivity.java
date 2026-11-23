@@ -187,7 +187,7 @@ public final class CropActivity extends Activity {
         Button stop = look.button(this, "×  Завершить сеанс", look.dangerTint, look.danger);
         stop.setContentDescription("Завершить сеанс захвата экрана");
         stop.setOnClickListener(v -> {
-            stopService(new Intent(this, ProjectionService.class));
+            ProjectionService.stopSession(this);
             Toast.makeText(this, "Сеанс захвата завершён", Toast.LENGTH_SHORT).show();
             finish();
         });

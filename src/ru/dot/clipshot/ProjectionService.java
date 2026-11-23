@@ -208,6 +208,11 @@ public final class ProjectionService extends Service {
         consentDispatched = false;
     }
 
+    static void stopSession(Context context) {
+        clearConsent();
+        context.stopService(new Intent(context, ProjectionService.class));
+    }
+
     public static Intent stopIntent(Context context) {
         return new Intent(context, ProjectionService.class).setAction(STOP);
     }
