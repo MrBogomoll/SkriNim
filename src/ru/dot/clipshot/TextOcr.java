@@ -24,7 +24,7 @@ final class TextOcr {
     private TextOcr() {}
 
     /** Worker-thread call. Returns [left, top, right, bottom, ...], with exclusive right/bottom. */
-    static int[] detect(Context context, Bitmap bitmap) throws Exception {
+    static int[] detect(Context context, Bitmap bitmap) throws IOException, InterruptedException {
         if (bitmap == null || bitmap.isRecycled()) throw new IllegalArgumentException("Invalid input bitmap");
         File dataPath = installModels(context);
         // The primary pass is intentionally identical to 0.22. Additional language
@@ -34,21 +34,26 @@ final class TextOcr {
         try {
             numeric = recognize(dataPath, bitmap, ALL_LANGUAGES, TessBaseAPI.PageSegMode.PSM_SINGLE_BLOCK, true);
         } catch (IOException | RuntimeException supplementalFailure) {
+            checkCancelled();
             return primary; // A supplemental model error must not lose the main result.
         }
+        checkCancelled();
         return OcrNumeric.append(primary, numeric);
     }
 
     private static int[] recognize(File dataPath, Bitmap bitmap, String languages, int segmentation,
-                                   boolean numericOnly) throws IOException {
+                                   boolean numericOnly) throws IOException, InterruptedException {
+        checkCancelled();
         TessBaseAPI tess = new TessBaseAPI();
         try {
             if (!tess.init(dataPath.getAbsolutePath(), languages, TessBaseAPI.OEM_LSTM_ONLY)) {
                 throw new IOException("Unable to initialize offline OCR");
             }
+            checkCancelled();
             tess.setPageSegMode(segmentation);
             tess.setImage(bitmap);
             tess.getUTF8Text(); // Starts recognition; the transient return value is discarded.
+            checkCancelled();
             ResultIterator iter = tess.getResultIterator();
             if (iter == null) return new int[0];
             try {
@@ -57,6 +62,7 @@ final class TextOcr {
                 int width = bitmap.getWidth(), height = bitmap.getHeight();
                 iter.begin();
                 do {
+                    checkCancelled();
                     int[] bounds = iter.getBoundingBox(WORD);
                     if (bounds == null || bounds.length != 4) continue;
                     float confidence = iter.confidence(WORD);
@@ -85,11 +91,17 @@ final class TextOcr {
         return Math.max(0, Math.min(max, coordinate));
     }
 
-    private static synchronized File installModels(Context context) throws IOException {
+    private static void checkCancelled() throws InterruptedException {
+        if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
+    }
+
+    private static synchronized File installModels(Context context) throws IOException, InterruptedException {
+        checkCancelled();
         File parent = new File(context.getNoBackupFilesDir(), MODEL_VERSION);
         File languages = new File(parent, "tessdata");
         if (!languages.isDirectory() && !languages.mkdirs()) throw new IOException("Unable to create model directory");
         for (int i = 0; i < MODEL_CODES.length; i++) {
+            checkCancelled();
             install(context, languages, MODEL_CODES[i] + ".traineddata", MODEL_BYTES[i]);
         }
         return parent;

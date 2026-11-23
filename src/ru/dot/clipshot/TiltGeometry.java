@@ -63,19 +63,10 @@ final class TiltGeometry {
 
     /** Select integer boundaries inward so rounding cannot reveal rotated corners. */
     void pixels(int w, int h, float l, float t, float r, float b, int numerator, int denominator, int[] out) {
-        int left=(int)Math.ceil(l), top=(int)Math.ceil(t), right=(int)Math.floor(r), bottom=(int)Math.floor(b);
-        if (numerator > 0 && denominator > 0) {
-            int count = Math.min((right-left)/numerator,(bottom-top)/denominator);
-            if (count > 0) {
-                int cw=count*numerator, ch=count*denominator;
-                left+=(right-left-cw)/2; top+=(bottom-top-ch)/2;
-                right=left+cw; bottom=top+ch;
-            }
+        CropAspect.pixels(w, h, l, t, r, b, numerator, denominator, out);
+        if (!fits(w, h, out[0], out[1], out[2], out[3])) {
+            out[2] = out[0];
+            out[3] = out[1];
         }
-        if (right <= left || bottom <= top || !fits(w,h,left,top,right,bottom)) {
-            // Rare subpixel frame. The source center is guaranteed inside any tilt.
-            left=(w-1)/2; top=(h-1)/2; right=left+1; bottom=top+1;
-        }
-        out[0]=left; out[1]=top; out[2]=right; out[3]=bottom;
     }
 }

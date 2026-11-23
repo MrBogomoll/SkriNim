@@ -1,4 +1,4 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="ru.dot.clipshot" android:versionCode="119" android:versionName="1.1.2">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="ru.dot.clipshot" android:versionCode="120" android:versionName="1.1.2_b.1">
   <uses-sdk android:minSdkVersion="31" android:targetSdkVersion="35"/>
   <queries>
     <intent><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.HOME"/></intent>

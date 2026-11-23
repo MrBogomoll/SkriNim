@@ -38,6 +38,25 @@ public final class EditorGeometryTest {
         check(CropFormats.NAMES[tall].equals("9:21") && CropFormats.rotate(tall)==wide, "missing reciprocal");
         CropAspect.pixels(1080,2400,30,50,1010,2310,CropFormats.W[tall],CropFormats.H[tall],pixels);
         check((pixels[2]-pixels[0])*7==(pixels[3]-pixels[1])*3,"wrong ultrawide portrait export");
+        // Reported 16:9 selection used to include four extra columns on both sides.
+        CropAspect.pixels(1080,2400,100,200,524,438.5f,16,9,pixels);
+        check(pixels[0]==104 && pixels[1]==202 && pixels[2]==520 && pixels[3]==436,
+                "export must be the centered, contained 416x234 rectangle");
+        float[][] frames = {{0,0,233.75f,229.5f},{60.5f,0,1080,429.25f},
+                {327.3f,1800.4f,1080,2400},{0,1999.6f,222.8f,2400}};
+        for (float[] frame : frames) {
+            for (int i=0;i<CropFormats.W.length;i++) {
+                int n=CropFormats.W[i], d=CropFormats.H[i];
+                CropAspect.pixels(1080,2400,frame[0],frame[1],frame[2],frame[3],n,d,pixels);
+                check(pixels[0]>=frame[0] && pixels[1]>=frame[1] &&
+                        pixels[2]<=frame[2] && pixels[3]<=frame[3],"export exposes a pixel outside the frame");
+                if (n>0) check((pixels[2]-pixels[0])*d==(pixels[3]-pixels[1])*n, "wrong export ratio");
+            }
+        }
+        CropAspect.pixels(10,10,2.2f,3,2.8f,8,0,0,pixels);
+        check(pixels[0]==pixels[2], "subpixel crop must not select an outside pixel");
+        CropAspect.pixels(10,10,1,1,9,5,16,9,pixels);
+        check(pixels[0]==pixels[2] && pixels[1]==pixels[3], "cannot fit an integer 16:9 crop");
         System.out.println("Orientation inverses, exact 360°, crop constraints and export ratio: OK");
     }
 }
