@@ -13,10 +13,26 @@ final class ShotMemory {
     private static ScrollPage page;
     private static ScrollGestureService.Origin origin;
     private static volatile Entry entry;
+    private static CropActivity.EditorSnapshot editorSnapshot;
+
+    static void keepEditorSnapshot(CropActivity.EditorSnapshot snapshot) {
+        if (preview() == snapshot.source) editorSnapshot = snapshot;
+    }
+
+    static boolean hasDetachedEditor() {
+        return editorSnapshot != null && editorSnapshot.source == preview();
+    }
+
+    static CropActivity.EditorSnapshot takeEditorSnapshot(Bitmap source) {
+        CropActivity.EditorSnapshot snapshot = editorSnapshot;
+        editorSnapshot = null;
+        return snapshot != null && snapshot.source == source ? snapshot : null;
+    }
 
     static void putPage(ScrollPage next) {
         if (page != next) origin = null;
         page = next;
+        if (next == null) editorSnapshot = null;
     }
     static void setOrigin(ScrollGestureService.Origin value) { origin = value; }
     static ScrollGestureService.Origin origin() { return origin; }

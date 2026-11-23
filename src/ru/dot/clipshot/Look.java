@@ -19,8 +19,12 @@ final class Look {
     final boolean dark;
     final int canvas, panel, text, muted, accent, onAccent, tint, danger, dangerTint, border, frame;
 
+    static boolean isDark(Context context) {
+        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(DARK, false);
+    }
+
     Look(Context context) {
-        dark = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(DARK, false);
+        dark = isDark(context);
         canvas = dark ? 0xff12151b : 0xffeef2f7;
         panel = dark ? 0xff1c212b : 0xfffdfdff;
         text = dark ? 0xffeef3ff : 0xff172235;

@@ -27,22 +27,25 @@ final class CropAspect {
         bounds(nl,nt,nl+cw,nt+ch,out);
     }
 
-    static void pixels(int w,int h,float l,float t,float r,float b,int numerator,int denominator,int[] out) {
-        if(numerator>0 && denominator>0) {
-            int max=Math.min(w/numerator,h/denominator);
-            if(max>0) {
-                int k=Math.max(1,Math.min(max,Math.round(((r-l)/numerator+(b-t)/denominator)/2)));
-                int cw=k*numerator,ch=k*denominator;
-                out[0]=clampInt(Math.round((l+r-cw)/2),0,w-cw);
-                out[1]=clampInt(Math.round((t+b-ch)/2),0,h-ch);
-                out[2]=out[0]+cw;out[3]=out[1]+ch;
-                return;
-            }
+    /** Largest centered integer crop of the requested aspect inside all four selected edges. */
+    static void pixels(int w, int h, float l, float t, float r, float b, int numerator, int denominator, int[] out) {
+        int left = clampInt((int) Math.ceil(l), 0, w);
+        int top = clampInt((int) Math.ceil(t), 0, h);
+        int right = clampInt((int) Math.floor(r), left, w);
+        int bottom = clampInt((int) Math.floor(b), top, h);
+        if (numerator > 0 && denominator > 0) {
+            int scale = Math.min((right - left) / numerator, (bottom - top) / denominator);
+            int width = scale * numerator;
+            int height = scale * denominator;
+            left += (right - left - width) / 2;
+            top += (bottom - top - height) / 2;
+            right = left + width;
+            bottom = top + height;
         }
-        out[0]=clampInt(Math.round(l),0,w-1);
-        out[1]=clampInt(Math.round(t),0,h-1);
-        out[2]=clampInt(Math.round(r),out[0]+1,w);
-        out[3]=clampInt(Math.round(b),out[1]+1,h);
+        out[0] = left;
+        out[1] = top;
+        out[2] = right;
+        out[3] = bottom;
     }
 
     private static void bounds(float l,float t,float r,float b,float[] out) {

@@ -31,7 +31,12 @@ public final class SkriNimApp extends Application implements Application.Activit
      * while its task is backgrounded. A pending launch already counts.
      */
     boolean returnToEditor(Context caller) {
-        if (!editors.occupied()) return false;
+        if (!editors.occupied()) {
+            if (!ShotMemory.hasDetachedEditor()) return false;
+            ScrollPage page = ShotMemory.page();
+            openPage(caller, page, page);
+            return true;
+        }
         Activity existing=editors.active();
         if (existing!=null && !existing.isFinishing() && !existing.isDestroyed()) {
             try { caller.startActivity(editorIntent(caller)); }

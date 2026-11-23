@@ -33,6 +33,7 @@ import android.view.Choreographer;
 import android.view.Display;
 import android.widget.Toast;
 import java.nio.ByteBuffer;
+import java.util.concurrent.CopyOnWriteArraySet;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
@@ -47,6 +48,21 @@ public final class ProjectionService extends Service {
     private static final int NOTICE_ID = 91;
 
     static ProjectionService current;
+    private static final CopyOnWriteArraySet<Runnable> sessionListeners = new CopyOnWriteArraySet<>();
+
+    static boolean isRunning() { return current != null && current.ready(); }
+
+    static void observeSession(Runnable listener) {
+        sessionListeners.add(listener);
+        listener.run();
+    }
+
+    static void removeSessionListener(Runnable listener) { sessionListeners.remove(listener); }
+
+    private static void notifySessionChanged() {
+        for (Runnable listener : sessionListeners) listener.run();
+    }
+
     // The app picker can foreground the chosen task before it delivers RESULT_OK.
     // Keep its unused grant in this process until a visible user action starts the service.
     private static Intent pendingConsent;
@@ -192,6 +208,11 @@ public final class ProjectionService extends Service {
         consentDispatched = false;
     }
 
+    static void stopSession(Context context) {
+        clearConsent();
+        context.stopService(new Intent(context, ProjectionService.class));
+    }
+
     public static Intent stopIntent(Context context) {
         return new Intent(context, ProjectionService.class).setAction(STOP);
     }
@@ -264,6 +285,7 @@ public final class ProjectionService extends Service {
                 floating = new FloatingCapture(this,this::onBubbleTap);
                 refreshFloating();
                 scheduleIdle();
+                notifySessionChanged();
                 if (intent.getBooleanExtra(ANNOUNCE_READY, false)) {
                     scrollNotice = Toast.makeText(this, FloatingCapture.enabled(this)
                             ? "Сеанс запущен. Для снимка нажми плитку или плавающую кнопку."
@@ -688,7 +710,10 @@ public final class ProjectionService extends Service {
         bubbleBusy=false;
         if (floating!=null) floating.hide();
         main.removeCallbacks(idleStop);
-        if (current == this) current = null;
+        if (current == this) {
+            current = null;
+            notifySessionChanged();
+        }
         complete(null);
         if (display != null) {
             display.release();

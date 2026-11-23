@@ -25,6 +25,8 @@ public final class TiltGeometryTest {
                     check(tilt.fits(w,h,b[0],b[1],b[2],b[3]),"unsafe preview frame");
                     check(!tilt.fits(w,h,b[0]-.3f,b[1]-.3f,b[2]+.3f,b[3]+.3f), "frame was not maximal");
                     tilt.pixels(w,h,b[0],b[1],b[2],b[3],n,d,pixels);
+                    check(pixels[0]>=b[0] && pixels[1]>=b[1] &&
+                            pixels[2]<=b[2] && pixels[3]<=b[3], "tilted export escapes visible crop");
                     if (n>0) check((pixels[2]-pixels[0])*d==(pixels[3]-pixels[1])*n,"rounded export ratio");
                     check(pixels[2]-pixels[0]>10 && pixels[3]-pixels[1]>10,"unexpected export collapse");
                     for (int x : new int[]{pixels[0],pixels[2]}) {
@@ -43,6 +45,8 @@ public final class TiltGeometryTest {
                 }
             }
         }
+        new TiltGeometry(12).pixels(1080,2400,400.25f,700,400.75f,710,0,0,pixels);
+        check(pixels[0]==pixels[2], "tiny tilted frame must not expose an unrelated pixel");
         System.out.println("TiltGeometry: centered max size, anchored drag and integer crop safety passed");
     }
 }

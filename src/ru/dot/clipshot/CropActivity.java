@@ -187,13 +187,14 @@ public final class CropActivity extends Activity {
         Button stop = look.button(this, "×  Завершить сеанс", look.dangerTint, look.danger);
         stop.setContentDescription("Завершить сеанс захвата экрана");
         stop.setOnClickListener(v -> {
-            stopService(new Intent(this, ProjectionService.class));
+            ProjectionService.stopSession(this);
             Toast.makeText(this, "Сеанс захвата завершён", Toast.LENGTH_SHORT).show();
             finish();
         });
         header.addView(stop, new LinearLayout.LayoutParams(-2, -2));
         layout.addView(header, new LinearLayout.LayoutParams(-1, -2));
-        crop = new CropView(bitmap);
+        EditorSnapshot snapshot = ShotMemory.takeEditorSnapshot(bitmap);
+        crop = new CropView(bitmap, snapshot);
         layout.addView(crop, new LinearLayout.LayoutParams(-1, 0, 1f));
 
         LinearLayout actions = new LinearLayout(this);
@@ -308,6 +309,11 @@ public final class CropActivity extends Activity {
         getWindow().setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         setContentView(root);
         look.bars(this, layout);
+        if (crop.hasDraft()) {
+            refreshDraftControls();
+            captionMode(true);
+        }
+        if (textMosaic && textWords == null) startTextDetection();
         if (saved != null && saved.getBoolean("confirmScroll"))
             confirmScroll();
     }
@@ -438,6 +444,10 @@ public final class CropActivity extends Activity {
 
     @Override protected void onResume() {
         super.onResume();
+        if (crop != null && look.dark != Look.isDark(this)) {
+            recreate();
+            return;
+        }
         refreshScrollButtons();
         resumeScrollGrant();
     }
@@ -483,6 +493,10 @@ public final class CropActivity extends Activity {
             result = crop.selection();
         } catch (RuntimeException | OutOfMemoryError error) {
             exportFailed(toDevice);
+            return;
+        }
+        if (result == null) {
+            Toast.makeText(this, "Увеличь рамку для выбранного формата.", Toast.LENGTH_SHORT).show();
             return;
         }
         exportProgress = new android.app.AlertDialog.Builder(this)
@@ -549,7 +563,12 @@ public final class CropActivity extends Activity {
         if (textDetectionThread!=null) textDetectionThread.interrupt();
         dismissStyle();
         setEyePicking(false);
-        if (isFinishing()) ShotMemory.clearPreview(source);
+        if (isFinishing()) {
+            ShotMemory.clearPreview(source);
+        } else if (crop != null && ShotMemory.preview() == source) {
+            crop.resetGesture();
+            ShotMemory.keepEditorSnapshot(new EditorSnapshot(this));
+        }
         super.onDestroy();
     }
 
@@ -2041,6 +2060,85 @@ public final class CropActivity extends Activity {
         Toast.makeText(this, "Разметка сброшена, кадрирование сохранено", Toast.LENGTH_SHORT).show();
     }
 
+    /** Kept only across screen recreation, while the current screenshot is in memory. */
+    static final class EditorSnapshot {
+        final Bitmap source;
+        final Markup markup;
+        final ImageTransform orientation;
+        final TiltGeometry tilt;
+        final RectF tiltBasis;
+        final RectF cropPixels;
+        final float zoomScale, centerX, centerY;
+        final int format, tool;
+        final boolean textMosaic;
+        final int[] textWords;
+        final CaptionStamp caption;
+        final CaptionFrame box;
+        final CaptionTransform pose;
+        final Markup.ShapeDraft shape;
+        final String value;
+        final int textStyle, fontSize, stepNumber, stepColor, markTool, calloutColor;
+        final boolean wrap, isCallout;
+        final float fontScale, fontPixels, captionMinWidth, pad, minWidth, minHeight;
+        final float tipX, tipY, calloutStroke, markStroke, markInitialRadius;
+        final float shapeX, shapeY, shapeWidth, shapeHeight;
+
+        EditorSnapshot(CropActivity editor) {
+            CropView view = editor.crop;
+            source = editor.source;
+            markup = view.markup;
+            orientation = view.orientation;
+            tilt = view.tiltGeometry;
+            tiltBasis = new RectF(view.tiltBasis);
+            cropPixels = new RectF(view.zoomCrop);
+            if (cropPixels.isEmpty() && !view.image.isEmpty() && !view.selected.isEmpty()) {
+                cropPixels.set(view.orientedX(view.selected.left), view.orientedY(view.selected.top),
+                        view.orientedX(view.selected.right), view.orientedY(view.selected.bottom));
+            }
+            if (view.restoreViewport != null) {
+                zoomScale = view.restoreViewport.zoomScale;
+                centerX = view.restoreViewport.centerX;
+                centerY = view.restoreViewport.centerY;
+            } else {
+                zoomScale = view.zoom.scale;
+                centerX = view.image.isEmpty() ? .5f : (view.getWidth() * .5f - view.image.left) / view.image.width();
+                centerY = view.image.isEmpty() ? .5f : (view.getHeight() * .5f - view.image.top) / view.image.height();
+            }
+            format = view.format;
+            tool = editor.editorTool;
+            textMosaic = editor.textMosaic;
+            textWords = editor.textWords;
+            caption = view.draft;
+            box = view.draftBox;
+            pose = view.draftPose;
+            shape = view.shapeDraft;
+            value = editor.draftValue;
+            textStyle = editor.draftTextStyle;
+            fontSize = editor.captionWidth;
+            wrap = editor.captionWrap;
+            stepNumber = view.draftStepNumber;
+            stepColor = view.draftStepColor;
+            markTool = view.draftMarkTool;
+            markStroke = view.draftMarkStroke;
+            markInitialRadius = view.draftMarkInitialRadius;
+            shapeX = view.shapeBaseX;
+            shapeY = view.shapeBaseY;
+            shapeWidth = view.shapeBaseW;
+            shapeHeight = view.shapeBaseH;
+            isCallout = view.draftIsCallout;
+            calloutColor = view.draftCalloutColor;
+            calloutStroke = view.draftCalloutStroke;
+            fontScale = view.draftFontScale;
+            fontPixels = view.draftFontPixels;
+            captionMinWidth = view.draftCaptionMinWidth;
+            pad = view.draftPad;
+            minWidth = view.draftMinWidth;
+            minHeight = view.draftMinHeight;
+            tipX = view.draftTipX;
+            tipY = view.draftTipY;
+        }
+    }
+
     private final class CropView extends View {
         private final Markup markup;
         private CaptionStamp draft;
@@ -2097,15 +2195,63 @@ public final class CropActivity extends Activity {
         private final EyedropperLoupe loupe;
         private final int[] samplePixels = new int[EyedropperLoupe.GRID * EyedropperLoupe.GRID];
 
-        CropView(Bitmap bitmap) {
+        private EditorSnapshot restoreViewport;
+
+        CropView(Bitmap bitmap, EditorSnapshot snapshot) {
             super(CropActivity.this);
             this.bitmap = bitmap;
             bitmapFrame=new RectF(0,0,bitmap.getWidth(),bitmap.getHeight());
-            orientation = new ImageTransform(bitmap.getWidth(), bitmap.getHeight());
-            markup = new Markup(bitmap);
+            if (snapshot == null) {
+                orientation = new ImageTransform(bitmap.getWidth(), bitmap.getHeight());
+                markup = new Markup(bitmap);
+            } else {
+                orientation = snapshot.orientation;
+                markup = snapshot.markup;
+                tiltGeometry = snapshot.tilt;
+                tiltBasis.set(snapshot.tiltBasis);
+                format = snapshot.format;
+                updateTransform();
+                zoomCrop.set(snapshot.cropPixels);
+                restoreViewport = snapshot;
+                editorTool = snapshot.tool;
+                textMosaic = snapshot.textMosaic;
+                textWords = snapshot.textWords;
+                restorePlacement(snapshot);
+            }
             loupe = new EyedropperLoupe(look, getResources().getDisplayMetrics().density);
             setContentDescription("Область обрезки снимка");
             setFocusable(true);
+        }
+
+        private void restorePlacement(EditorSnapshot snapshot) {
+            draft = snapshot.caption;
+            draftBox = snapshot.box;
+            draftPose = snapshot.pose;
+            shapeDraft = snapshot.shape;
+            draftValue = snapshot.value;
+            draftTextStyle = snapshot.textStyle;
+            captionWidth = snapshot.fontSize;
+            captionWrap = snapshot.wrap;
+            draftStepNumber = snapshot.stepNumber;
+            draftStepColor = snapshot.stepColor;
+            draftMarkTool = snapshot.markTool;
+            draftMarkStroke = snapshot.markStroke;
+            draftMarkInitialRadius = snapshot.markInitialRadius;
+            shapeBaseX = snapshot.shapeX;
+            shapeBaseY = snapshot.shapeY;
+            shapeBaseW = snapshot.shapeWidth;
+            shapeBaseH = snapshot.shapeHeight;
+            draftIsCallout = snapshot.isCallout;
+            draftCalloutColor = snapshot.calloutColor;
+            draftCalloutStroke = snapshot.calloutStroke;
+            draftFontScale = snapshot.fontScale;
+            draftFontPixels = snapshot.fontPixels;
+            draftCaptionMinWidth = snapshot.captionMinWidth;
+            draftPad = snapshot.pad;
+            draftMinWidth = snapshot.minWidth;
+            draftMinHeight = snapshot.minHeight;
+            draftTipX = snapshot.tipX;
+            draftTipY = snapshot.tipY;
         }
 
         @Override protected void onSizeChanged(int w, int h, int oldW, int oldH) {
@@ -2120,6 +2266,16 @@ public final class CropActivity extends Activity {
                     (selected.bottom - image.top) / image.height());
             }
             layoutFrame(w,h,fraction);
+            if (restoreViewport != null && w > 0 && h > 0) {
+                if (restoreViewport.zoomScale > 1f && !zoomCrop.isEmpty()) {
+                    zoom.update(fitWidth, fitHeight, image.left, image.top, w, h,
+                            image.left + restoreViewport.centerX * fitWidth,
+                            image.top + restoreViewport.centerY * fitHeight,
+                            w * .5f, h * .5f, restoreViewport.zoomScale);
+                    applyZoom();
+                }
+                restoreViewport = null;
+            }
         }
 
         private void layoutFrame(int w,int h,RectF fraction) {
@@ -2131,8 +2287,9 @@ public final class CropActivity extends Activity {
             zoom.maxScale = Math.max(8f, 1f / scale);
             float width=fitWidth=scale*orientation.width,height=fitHeight=scale*orientation.height;
             image.set((w-width)/2,(h-height)/2,(w+width)/2,(h+height)/2);
-            selected.set(image.left+fraction.left*width,image.top+fraction.top*height,
-                    image.left+fraction.right*width,image.top+fraction.bottom*height);
+            selected.set(image.left + fraction.left * width, image.top + fraction.top * height,
+                    fraction.right == 1f ? image.right : image.left + fraction.right * width,
+                    fraction.bottom == 1f ? image.bottom : image.top + fraction.bottom * height);
         }
 
         private float ratio() {
@@ -2255,8 +2412,11 @@ public final class CropActivity extends Activity {
                     || box[2] != bitmap.getWidth() || box[3] != bitmap.getHeight();
         }
 
+        private final int[] pixelBounds = new int[4];
+        private final RectF frameOnScreen = new RectF();
+
         private int[] selectedPixels() {
-            int[] box=new int[4];
+            int[] box = pixelBounds;
             float l=zoomCrop.isEmpty()?orientedX(selected.left):zoomCrop.left;
             float t=zoomCrop.isEmpty()?orientedY(selected.top):zoomCrop.top;
             float r=zoomCrop.isEmpty()?orientedX(selected.right):zoomCrop.right;
@@ -2268,14 +2428,22 @@ public final class CropActivity extends Activity {
             return box;
         }
 
+        // Gestures keep their fractional coordinates. Draw and hit-test the exact output boundary.
+        private RectF visibleFrame() {
+            int[] box = selectedPixels();
+            if (box[2] <= box[0] || box[3] <= box[1]) return selected;
+            float sx = image.width() / orientation.width;
+            float sy = image.height() / orientation.height;
+            frameOnScreen.set(image.left + box[0] * sx, image.top + box[1] * sy,
+                    image.left + box[2] * sx, image.top + box[3] * sy);
+            return frameOnScreen;
+        }
+
         Bitmap selection() {
-            if (image.isEmpty() || selected.isEmpty()) {
-                if (markup.hasMarks() || !orientation.isIdentity() || tilt() != 0)
-                    throw new IllegalStateException("Cannot export transformed image without a crop");
-                return bitmap;
-            }
+            if (image.isEmpty() || selected.isEmpty()) return null;
             int[] box = selectedPixels();
             int left=box[0],top=box[1],width=box[2]-left,height=box[3]-top;
+            if (width == 0 || height == 0) return null;
             if (!markup.hasMarks() && orientation.isIdentity() && tilt() == 0) {
                 if (left == 0 && top == 0 && width == bitmap.getWidth() && height == bitmap.getHeight())
                     return bitmap;
@@ -2311,6 +2479,7 @@ public final class CropActivity extends Activity {
                 return;
             }
             if (image.isEmpty() || selected.isEmpty()) return;
+            RectF frame = visibleFrame();
             paint.setStyle(Paint.Style.FILL);
             paint.setColor(Color.WHITE);
             int saved = canvas.save();
@@ -2320,7 +2489,7 @@ public final class CropActivity extends Activity {
             drawSource(canvas,paint);
             canvas.restoreToCount(saved);
             saved=canvas.save();
-            canvas.clipRect(selected);
+            canvas.clipRect(frame);
             canvas.translate(image.left,image.top);
             canvas.scale(image.width()/orientation.width,image.height()/orientation.height);
             canvas.concat(transform);
@@ -2328,7 +2497,7 @@ public final class CropActivity extends Activity {
             canvas.restoreToCount(saved);
             if (pointer != -1 && isSpecialBrush()) {
                 int cursor = canvas.save();
-                canvas.clipRect(selected);
+                canvas.clipRect(frame);
                 float radius = activeWidth() * image.width() / (2f * orientation.width);
                 paint.setStyle(Paint.Style.STROKE);
                 paint.setStrokeWidth(dp(2));
@@ -2343,33 +2512,33 @@ public final class CropActivity extends Activity {
             paint.setColor(look.dark ? 0x99000000 : 0x80121d2c);
             if (tilt() != 0) {
                 int shade=canvas.save();
-                canvas.clipOutRect(selected);
+                canvas.clipOutRect(frame);
                 canvas.drawColor(paint.getColor());
                 canvas.restoreToCount(shade);
             } else {
-                canvas.drawRect(image.left, image.top, image.right, selected.top, paint);
-                canvas.drawRect(image.left, selected.bottom, image.right, image.bottom, paint);
-                canvas.drawRect(image.left, selected.top, selected.left, selected.bottom, paint);
-                canvas.drawRect(selected.right, selected.top, image.right, selected.bottom, paint);
+                canvas.drawRect(image.left, image.top, image.right, frame.top, paint);
+                canvas.drawRect(image.left, frame.bottom, image.right, image.bottom, paint);
+                canvas.drawRect(image.left, frame.top, frame.left, frame.bottom, paint);
+                canvas.drawRect(frame.right, frame.top, image.right, frame.bottom, paint);
             }
 
-            final float l = selected.left, t = selected.top, r = selected.right, b = selected.bottom;
-            final float cx = selected.centerX(), cy = selected.centerY();
+            final float l = frame.left, t = frame.top, r = frame.right, b = frame.bottom;
+            final float cx = frame.centerX(), cy = frame.centerY();
             paint.setStrokeWidth(dp(1));
             paint.setColor(0x80ffffff);
             if (editorTool == Markup.CROP && (tiltGuide || pointer != -1 && moved && drag != MOVE))
                 for (int i = 1; i <= 2; ++i) {
-                float x = l + selected.width() * i / 3f, y = t + selected.height() * i / 3f;
+                float x = l + frame.width() * i / 3f, y = t + frame.height() * i / 3f;
                 canvas.drawLine(x, t, x, b, paint);
                 canvas.drawLine(l, y, r, y, paint);
             }
             paint.setColor(look.frame);
             paint.setStyle(Paint.Style.STROKE);
-            canvas.drawRect(selected, paint);
+            canvas.drawRect(frame, paint);
             paint.setStyle(Paint.Style.FILL);
             paint.setStrokeWidth(dp(4));
-            float hx = Math.min(dp(19), selected.width() / 4f);
-            float hy = Math.min(dp(19), selected.height() / 4f);
+            float hx = Math.min(dp(19), frame.width() / 4f);
+            float hy = Math.min(dp(19), frame.height() / 4f);
             canvas.drawLine(l, t, l + hx, t, paint);
             canvas.drawLine(l, t, l, t + hy, paint);
             canvas.drawLine(r, t, r - hx, t, paint);
@@ -2387,14 +2556,15 @@ public final class CropActivity extends Activity {
         }
 
         private int hit(float x, float y) {
+            RectF frame = visibleFrame();
             final float zone = dp(24);
-            if (x < selected.left - zone || x > selected.right + zone ||
-                y < selected.top - zone || y > selected.bottom + zone) return 0;
-            float dl = Math.abs(x - selected.left), dr = Math.abs(x - selected.right);
-            float dt = Math.abs(y - selected.top), db = Math.abs(y - selected.bottom);
+            if (x < frame.left - zone || x > frame.right + zone ||
+                y < frame.top - zone || y > frame.bottom + zone) return 0;
+            float dl = Math.abs(x - frame.left), dr = Math.abs(x - frame.right);
+            float dt = Math.abs(y - frame.top), db = Math.abs(y - frame.bottom);
             int h = Math.min(dl, dr) <= zone ? (dl <= dr ? LEFT : RIGHT) : 0;
             int v = Math.min(dt, db) <= zone ? (dt <= db ? TOP : BOTTOM) : 0;
-            return (h | v) != 0 ? (h | v) : selected.contains(x, y) ? MOVE : 0;
+            return (h | v) != 0 ? (h | v) : frame.contains(x, y) ? MOVE : 0;
         }
 
         void resetGesture() {
@@ -2912,6 +3082,15 @@ public final class CropActivity extends Activity {
             }
         }
 
+        private void applyZoom() {
+            float w = fitWidth * zoom.scale, h = fitHeight * zoom.scale;
+            image.set(zoom.left, zoom.top, zoom.left + w, zoom.top + h);
+            selected.set(image.left + w * (zoomCrop.left / orientation.width),
+                    image.top + h * (zoomCrop.top / orientation.height),
+                    image.left + w * (zoomCrop.right / orientation.width),
+                    image.top + h * (zoomCrop.bottom / orientation.height));
+        }
+
         private void transformTouch(MotionEvent event) {
             final int action=event.getActionMasked();
             if (action==MotionEvent.ACTION_UP || action==MotionEvent.ACTION_CANCEL) {
@@ -2937,12 +3116,7 @@ public final class CropActivity extends Activity {
                         orientedX(selected.right),orientedY(selected.bottom));
                 zoom.update(fitWidth,fitHeight,image.left,image.top,getWidth(),getHeight(),
                         pinchX,pinchY,x,y,span/pinchSpan);
-                float w=fitWidth*zoom.scale, h=fitHeight*zoom.scale;
-                image.set(zoom.left,zoom.top,zoom.left+w,zoom.top+h);
-                selected.set(image.left+w*(zoomCrop.left/orientation.width),
-                        image.top+h*(zoomCrop.top/orientation.height),
-                        image.left+w*(zoomCrop.right/orientation.width),
-                        image.top+h*(zoomCrop.bottom/orientation.height));
+                applyZoom();
                 invalidate();
             }
             pinchSpan=span;

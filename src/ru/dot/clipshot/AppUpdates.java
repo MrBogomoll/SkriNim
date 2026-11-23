@@ -2,6 +2,7 @@ package ru.dot.clipshot;
 
 import android.content.Context;
 import android.content.pm.PackageInfo;
+import android.content.pm.PackageManager;
 import android.os.Handler;
 import android.os.Looper;
 import org.json.JSONObject;
@@ -131,7 +132,7 @@ final class AppUpdates {
                     int count;
                     while ((count = input.read(buffer)) != -1) {
                         total += count;
-                        if (total > target.size) throw new IOException();
+                        if (total > target.size) break;
                         sha.update(buffer, 0, count);
                         output.write(buffer, 0, count);
                         int percent = (int) (100.0 * total / target.size);
@@ -148,16 +149,41 @@ final class AppUpdates {
                     main.post(() -> finish("Файл повреждён. Попробуй скачать обновление ещё раз.", Action.DOWNLOAD));
                     return;
                 }
-                PackageInfo apk = app.getPackageManager().getPackageArchiveInfo(partial.getPath(), 0);
-                PackageInfo current = app.getPackageManager().getPackageInfo(app.getPackageName(), 0);
-                if (apk == null || !app.getPackageName().equals(apk.packageName)
-                        || ReleaseInfo.compare(target.version, apk.versionName) != 0
+                PackageManager packages = app.getPackageManager();
+                int flags = PackageManager.GET_SIGNING_CERTIFICATES;
+                PackageInfo apk = packages.getPackageArchiveInfo(partial.getPath(), flags);
+                if (apk == null) {
+                    main.post(() -> finish("Android не смог прочитать APK или проверить его подпись.", Action.PAGE));
+                    return;
+                }
+                if (!app.getPackageName().equals(apk.packageName)) {
+                    main.post(() -> finish("У APK другой идентификатор приложения. Эту сборку им не обновить.", Action.PAGE));
+                    return;
+                }
+                PackageInfo current = packages.getPackageInfo(app.getPackageName(), flags);
+                if (ReleaseInfo.compare(target.version, apk.versionName) != 0
                         || apk.getLongVersionCode() <= current.getLongVersionCode()) {
-                    main.post(() -> finish("APK не подходит для обновления этой сборки.", Action.PAGE));
+                    main.post(() -> finish("Номер версии APK не подходит для обновления этой сборки.", Action.PAGE));
+                    return;
+                }
+                UpdateSigners signers = current.signingInfo == null || apk.signingInfo == null
+                        ? UpdateSigners.UNKNOWN : UpdateSigners.compare(current.signingInfo.getApkContentsSigners(),
+                            apk.signingInfo.getApkContentsSigners(), apk.signingInfo.getSigningCertificateHistory());
+                if (signers == UpdateSigners.UNKNOWN) {
+                    main.post(() -> finish("Не удалось проверить подпись APK.", Action.PAGE));
+                    return;
+                }
+                if (signers == UpdateSigners.INCOMPATIBLE) {
+                    main.post(() -> finish("Подписи сборок несовместимы. Открой инструкции по установке на странице релиза.", Action.PAGE));
                     return;
                 }
                 if (!partial.renameTo(UpdateProvider.apk(app))) throw new IOException();
-                main.post(() -> finish("SkriNim " + target.version + " скачан и готов к установке.", Action.INSTALL));
+                String status = signers == UpdateSigners.ROTATED
+                        ? "APK скачан. Ключ подписи изменился. Android проверит возможность обновления при установке."
+                        : "SkriNim " + target.version + " скачан и готов к установке.";
+                main.post(() -> finish(status, Action.INSTALL));
+            } catch (IllegalArgumentException badVersion) {
+                main.post(() -> finish("У APK некорректный номер версии.", Action.PAGE));
             } catch (Exception error) {
                 main.post(() -> finish("Не удалось скачать APK. Проверь соединение и свободное место.", Action.DOWNLOAD));
             } finally {
